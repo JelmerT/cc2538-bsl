@@ -8,7 +8,7 @@ It can be used to erase, program and verify the flash of the CC2538 with a simpl
 
 To run this script you need a Python interpreter, Linux and Mac users should be fine, Windows users have a look here: [Python Download][python].
 
-To communicate with the uart port of the CC2538 SoC you need a usb to serial converter. 
+To communicate with the uart port of the CC2538 SoC you need a usb to serial converter.
 * If you use the SmartRF06 board (CC2538DK) you can use the on board ftdi chip. Make sure the "Enable UART" jumper is set on the board. See the cc2538dk platform folder for more info on drivers for this chip on different operating systems.
 * If you use a different platform, there are many cheap USB to UART converters available, but make sure you use one with 3.3v voltage levels.
 
@@ -21,7 +21,7 @@ If you did lock yourself out or there is already an image flashed on your SoC, y
 
 ###Usage
 
-The script will automatically select the first serial looking port from a USB to uart converter in `/dev` (OSX, Linux), Windows needs testing. 
+The script will automatically select the first serial looking port from a USB to uart converter in `/dev` (OSX, Linux), Windows needs testing.
 
 Before uploading your image start the boot loader on the SoC (Select + Reset on CC2538DK).
 If you want to use the script stand-alone you can use `python cc2538-bsl.py -h` for help.

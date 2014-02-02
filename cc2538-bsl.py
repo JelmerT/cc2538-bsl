@@ -31,7 +31,7 @@
 
 # Serial boot loader over UART for CC2538
 # Based on the info found in Ti's swru333a.pdf (spma029.pdf)
-# 
+#
 # Bootloader only starts if no valid image is found or if boot loader
 # backdoor is enabled.
 # Make sure you don't lock yourself out!! (enable backdoor)
@@ -133,7 +133,7 @@ class CommandInterface(object):
         return (chr(byte0) + chr(byte1) + chr(byte2) + chr(byte3))
 
     def _decode_addr(self, byte0, byte1, byte2, byte3):
-        return ((byte3 << 24) | (byte2 << 16) | (byte1 << 8) | (byte0 << 0))        
+        return ((byte3 << 24) | (byte2 << 16) | (byte1 << 8) | (byte0 << 0))
 
     def _calc_checks(self,cmd,addr,size):
         return (chr((sum(bytearray(self._encode_addr(addr)))
@@ -207,8 +207,8 @@ class CommandInterface(object):
         self.sp.write(chr(lng)) #send size
         self.sp.write(chr(cmd)) #send checksum
         self.sp.write(chr(cmd)) # send data
-        
-        mdebug(10, "*** Ping command (0x20)")        
+
+        mdebug(10, "*** Ping command (0x20)")
         if self._wait_for_ack("Ping (0x20)"):
             return self.checkLastCmd()
 
@@ -221,7 +221,7 @@ class CommandInterface(object):
         self.sp.write(chr(cmd)) # send data
 
         mdebug(10, "*** Reset command (0x25)")
-        if self._wait_for_ack("Reset (0x25)"): 
+        if self._wait_for_ack("Reset (0x25)"):
             return 1
 
     def cmdGetChipId(self):
@@ -231,7 +231,7 @@ class CommandInterface(object):
         self.sp.write(chr(lng)) #send size
         self.sp.write(chr(cmd)) #send checksum
         self.sp.write(chr(cmd)) # send data
-        
+
         mdebug(10, "*** GetChipId command (0x28)")
         if self._wait_for_ack("Get ChipID (0x28)"):
             version = self.receivePacket() #4 byte answ, the 2 LSB hold chip ID
@@ -260,7 +260,7 @@ class CommandInterface(object):
         self.sp.write(chr(lng)) #send size
         self.sp.write(chr(cmd)) #send checksum
         self.sp.write(chr(cmd)) # send data
-        
+
         mdebug(10, "*** SetXOsc command (0x29)")
         if self._wait_for_ack("SetXOsc (0x29)"):
             return 1
@@ -326,7 +326,7 @@ class CommandInterface(object):
         cmd=0x24
         lng=len(data)+3
         #TODO: check total size of data!! max 252 bytes!
-        
+
         self.sp.write(chr(lng)) #send size
         self.sp.write(chr((sum(bytearray(data))+cmd)&0xFF)) #send checksum
         self.sp.write(chr(cmd)) # send cmd
@@ -363,7 +363,7 @@ class CommandInterface(object):
         self.sp.write(self._encode_addr(addr)) #send addr
         self.sp.write(bytearray(data)) # send data
         self.sp.write(chr(width)) #send width, 4 bytes
-        
+
         mdebug(10, "*** Mem write (0x2B)")
         if self._wait_for_ack("Mem Write (0x2B)",2):
             return checkLastCmd()
@@ -496,13 +496,13 @@ if __name__ == "__main__":
     try:
         if conf['port'] == 'auto':
             ports = []
-    
+
             # Get a list of all USB-like names in /dev
             for name in ['tty.usbserial', 'ttyUSB', 'tty.usbmodem']:
                 ports.extend(glob.glob('/dev/%s*' % name))
-    
+
             ports = sorted(ports)
-    
+
             if ports:
                 # Found something - take it
                 conf['port'] = ports[0]
@@ -552,7 +552,7 @@ if __name__ == "__main__":
             address = 0x00200000 #flash start addr for cc2538 #conf['address']
             size = 0x80000 #total flash size
             mdebug(5, "Erasing %s bytes of memory starting at address 0x%x" % (size, address))
-            
+
             if cmd.cmdEraseMemory(address, size):
                 mdebug(5, "   Erase done")
             else:
@@ -588,4 +588,3 @@ if __name__ == "__main__":
 
     except Exception, err:
         print('ERROR: %s' % str(err))
-        
