@@ -34,7 +34,8 @@
 #
 # Bootloader only starts if no valid image is found or if boot loader
 # backdoor is enabled.
-# Make sure you don't lock yourself out!! (enable backdoor)
+# Make sure you don't lock yourself out!! (enable backdoor in your firmware)
+# More info at https://github.com/JelmerT/cc2538-bsl
 
 from __future__ import print_function
 
@@ -82,7 +83,7 @@ class CmdException(Exception):
     pass
 
 class CommandInterface(object):
-    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=300) :
+    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000) :
         self.sp = serial.Serial(
             port=aport,
             baudrate=abaudrate,     # baudrate
