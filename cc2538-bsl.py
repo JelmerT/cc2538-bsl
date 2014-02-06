@@ -30,7 +30,7 @@
 # Implementation based on stm32loader by Ivan A-R <ivan@tuxotronic.org>
 
 # Serial boot loader over UART for CC2538
-# Based on the info found in Ti's swru333a.pdf (spma029.pdf)
+# Based on the info found in TI's swru333a.pdf (spma029.pdf)
 #
 # Bootloader only starts if no valid image is found or if boot loader
 # backdoor is enabled.
@@ -339,24 +339,24 @@ class CommandInterface(object):
 
     def cmdMemRead(self, addr): #untested
         cmd=0x2A
-        lng=6
+        lng=8
 
         self.sp.write(chr(lng)) #send length
-        self.sp.write(self._calc_checks(cmd,addr,0)) #send checksum
+        self.sp.write(self._calc_checks(cmd,addr,4)) #send checksum
         self.sp.write(chr(cmd)) # send cmd
         self.sp.write(self._encode_addr(addr)) #send addr
-        self.sp.write(chr(0x01)) #send width, 4 bytes
+        self.sp.write(chr(4)) #send width, 4 bytes
 
         mdebug(10, "*** Mem Read (0x2A)")
-        if self._wait_for_ack("Mem Read (0x2A)",2):
+        if self._wait_for_ack("Mem Read (0x2A)",1):
             data = self.receivePacket()
-            #self.checkLastCmd()
-            return data
+            if self.checkLastCmd():
+                return data#self._decode_addr(ord(data[3]),ord(data[2]),ord(data[1]),ord(data[0]))
 
     def cmdMemWrite(self, addr, data, width): #untested
         #TODO: check width for 1 or 4 and data size
         cmd=0x2B
-        lng=6
+        lng=10
 
         self.sp.write(chr(lng)) #send length
         self.sp.write(self._calc_checks(cmd,addr,0)) #send checksum
@@ -379,7 +379,7 @@ class CommandInterface(object):
 
         data_fill_amount = sum(x != 255 for x in data)
 
-        mdebug(5, "Writing %(lng)d bytes to start address 0x%(addr)X" %
+        mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)X" %
                { 'lng': lng, 'addr': addr})
 
         if usepbar:
@@ -397,7 +397,7 @@ class CommandInterface(object):
                 if usepbar:
                     pbar.update(pbar.maxval-lng)
                 else:
-                    mdebug(5, "Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': trsf_size}, '\r')
+                    mdebug(5, " Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': trsf_size}, '\r')
                     sys.stdout.flush()
                 self.cmdSendData(data[offs:offs+trsf_size]) #send next data packet
             else:   #skipped packet, address needs to be set
@@ -415,6 +415,28 @@ class CommandInterface(object):
         self.cmdDownload(addr,lng)
         return self.cmdSendData(data[offs:offs+lng]) #send last data packet
 
+def query_yes_no(question, default="yes"):
+    valid = {"yes":True,   "y":True,  "ye":True,
+             "no":False,     "n":False}
+    if default == None:
+        prompt = " [y/n] "
+    elif default == "yes":
+        prompt = " [Y/n] "
+    elif default == "no":
+        prompt = " [y/N] "
+    else:
+        raise ValueError("invalid default answer: '%s'" % default)
+
+    while True:
+        sys.stdout.write(question + prompt)
+        choice = raw_input().lower()
+        if default is not None and choice == '':
+            return valid[default]
+        elif choice in valid:
+            return valid[choice]
+        else:
+            sys.stdout.write("Please respond with 'yes' or 'no' "\
+                             "(or 'y' or 'n').\n")
 
 def usage():
     print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [file.bin]
@@ -451,7 +473,7 @@ if __name__ == "__main__":
             'write': 0,
             'verify': 0,
             'read': 0,
-            'len': 1000,
+            'len': 0x80000,
             'fname':'',
         }
 
@@ -491,10 +513,29 @@ if __name__ == "__main__":
         elif o == '-l':
             conf['len'] = eval(a)
         else:
-            assert False, "unhandled option"
+            assert False, "Unhandled option"
 
-    # Try and find the port automatically
     try:
+        #Sanity checks
+        if conf['write'] or conf['read'] or conf['verify']:    #check for input/output file
+            try:
+                args[0]
+            except:
+                raise Exception('No file path given.')
+
+        if conf['write'] and conf['read']:
+            if not query_yes_no("You are reading and writing to the same file. This will overwrite your input file. "\
+            "Do you want to continue?","no"):
+                raise Exception('Aborted by user.')
+        if conf['erase'] and conf['read'] and not conf['write']:
+            if not query_yes_no("You are about to erase your target before reading. "\
+            "Do you want to continue?","no"):
+                raise Exception('Aborted by user.')
+
+        if conf['read'] and not conf['write'] and conf['verify']:
+            raise Exception('Verify after read not implemented.')
+
+        # Try and find the port automatically
         if conf['port'] == 'auto':
             ports = []
 
@@ -514,7 +555,7 @@ if __name__ == "__main__":
         cmd.open(conf['port'], conf['baud'])
         mdebug(5, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],
                                                       'baud':conf['baud']})
-        if (conf['write'] or conf['verify']):
+        if conf['write'] or conf['verify']:
             mdebug(5, "Reading data from %s" % args[0])
             data = read(args[0])
 
@@ -550,12 +591,12 @@ if __name__ == "__main__":
 
         if conf['erase']:
             # we only do full erase for now (CC2538)
-            address = 0x00200000 #flash start addr for cc2538 #conf['address']
-            size = 0x80000 #total flash size
-            mdebug(5, "Erasing %s bytes of memory starting at address 0x%x" % (size, address))
+            address = 0x00200000 #flash start addr for cc2538
+            size = 0x80000 #total flash size cc2538
+            mdebug(5, "Erasing %s bytes starting at address 0x%x" % (size, address))
 
             if cmd.cmdEraseMemory(address, size):
-                mdebug(5, "   Erase done")
+                mdebug(5, "    Erase done")
             else:
                 raise CmdException("Erase failed")
 
@@ -566,24 +607,32 @@ if __name__ == "__main__":
             else:
                 raise CmdException("Write failed                       ")
 
-
         if conf['verify']:
             mdebug(5,"Verifying by comparing CRC32 calculations.")
 
             crc_local = (binascii.crc32(bytearray(data))& 0xffffffff)
-
             crc_target = cmd.cmdCRC32(conf['address'],len(data)) #CRC of target will change according to length input file
 
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
             else:
+                cmd.cmdReset()
                 raise Exception("NO CRC32 match: Local = 0x%x, Target = 0x%x" % (crc_local,crc_target))
 
-
         if conf['read']:
-            raise Exception("Read Not implemented yet.")
-            # rdata = cmd.readMemory(conf['address'], conf['len'])
-            # file(args[0], 'wb').write(''.join(map(chr,rdata)))
+            length = conf['len']
+            if length < 4:  #reading 4 bytes at a time
+                length = 4
+            else:
+                length = length + (length % 4)
+
+            mdebug(5, "Reading %s bytes starting at address 0x%x" % (length, conf['address']))
+            f = file(args[0], 'w').close() #delete previous file
+            for i in range(0,(length/4)):
+                rdata = cmd.cmdMemRead(conf['address']+(i*4)) #reading 4 bytes at a time
+                mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address']+(i*4), ord(rdata[3]), ord(rdata[2]), ord(rdata[1]), ord(rdata[0])), '\r')
+                file(args[0], 'ab').write(''.join(reversed(rdata)))
+            mdebug(5, "    Read done                                ")
 
         cmd.cmdReset()
 
