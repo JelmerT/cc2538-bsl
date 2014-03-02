@@ -189,6 +189,9 @@ class CommandInterface(object):
 
     def checkLastCmd(self):
         stat = self.cmdGetStatus()
+        if not (stat):
+            raise CmdException("No response from target on status request. (Did you disable the bootloader?)")
+
         if ord(stat) == COMMAND_RET_SUCCESS:
             mdebug(10, "Command Successful")
             return 1
@@ -313,6 +316,9 @@ class CommandInterface(object):
         cmd=0x21
         lng=11
 
+        if (size % 4) != 0: #check for invalid data lengths
+            raise Exception('Invalid data size: %i. Size must be a multiple of 4.' % size)
+
         self.sp.write(chr(lng)) #send length
         self.sp.write(self._calc_checks(cmd,addr,size)) #send checksum
         self.sp.write(chr(cmd)) # send cmd
@@ -377,7 +383,15 @@ class CommandInterface(object):
         trsf_size = 248 #amount of data bytes transferred per packet (theory: max 252 + 3)
         empty_packet = [255]*trsf_size #empty packet (filled with 0xFF)
 
-        data_fill_amount = sum(x != 255 for x in data)
+        # Boot loader enable check
+        # TODO: implement check for all chip sizes & take into account partial firmware uploads
+        if (lng == 524288): #check if file is for 512K model
+            if not ((data[524247] & (1 << 4)) >> 4): #check the boot loader enable bit  (only for 512K model)
+                if not query_yes_no("The boot loader backdoor is not enabled "\
+                    "in the firmware you are about to write to the target. "\
+                    "You will NOT be able to reprogram the target using this tool if you continue! "\
+                    "Do you want to continue?","no"):
+                    raise Exception('Aborted by user.')
 
         mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)X" %
                { 'lng': lng, 'addr': addr})
