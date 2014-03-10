@@ -79,6 +79,8 @@ COMMAND_RET_INVALID_CMD = 0x42
 COMMAND_RET_INVALID_ADR = 0x43
 COMMAND_RET_FLASH_FAIL = 0x44
 
+ADDR_IEEE_ADDRESS_SECONDARY = 0x0027ffcc
+
 class CmdException(Exception):
     pass
 
@@ -452,23 +454,47 @@ def query_yes_no(question, default="yes"):
             sys.stdout.write("Please respond with 'yes' or 'no' "\
                              "(or 'y' or 'n').\n")
 
+# Convert the entered IEEE address into an integer
+def parse_ieee_address (inaddr):
+    try:
+        return int(inaddr, 16)
+    except ValueError:
+        # inaddr is not a hex string, look for other formats
+        if ':' in inaddr:
+            bytes = inaddr.split(':')
+        elif '-' in inaddr:
+            bytes = inaddr.split('-')
+        if len(bytes) != 8:
+            raise ValueError("Supplied IEEE address does not contain 8 bytes")
+        addr = 0
+        for i,b in zip(range(8), bytes):
+            try:
+                addr += int(b, 16) << (56-(i*8))
+            except ValueError:
+                raise ValueError("IEEE address contains invalid bytes")
+        return addr
+
+
 def usage():
-    print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [file.bin]
-    -h          This help
-    -q          Quiet
-    -V          Verbose
-    -e          Erase (full)
-    -w          Write
-    -v          Verify (CRC32 check)
-    -r          Read
-    -l length   Length of read
-    -p port     Serial port (default: first USB-like port in /dev)
-    -b baud     Baud speed (default: 500000)
-    -a addr     Target address
+    print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [file.bin]
+    -h                       This help
+    -q                       Quiet
+    -V                       Verbose
+    -e                       Erase (full)
+    -w                       Write
+    -v                       Verify (CRC32 check)
+    -r                       Read
+    -l length                Length of read
+    -p port                  Serial port (default: first USB-like port in /dev)
+    -b baud                  Baud speed (default: 500000)
+    -a addr                  Target address
+    -i, --ieee-address addr  Set the secondary 64 bit IEEE address
 
+Examples:
     ./%s -e -w -v example/main.bin
+    ./%s -e -w -v --ieee-address 00:12:4b:aa:bb:cc:dd:ee example/main.bin
 
-    """ % (sys.argv[0],sys.argv[0]))
+    """ % (sys.argv[0],sys.argv[0],sys.argv[0]))
 
 def read(filename):
     """Read the file to be programmed and turn it into a binary"""
@@ -489,12 +515,13 @@ if __name__ == "__main__":
             'read': 0,
             'len': 0x80000,
             'fname':'',
+            'ieee_address': 0,
         }
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:")
+        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address='])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -526,6 +553,8 @@ if __name__ == "__main__":
             conf['address'] = eval(a)
         elif o == '-l':
             conf['len'] = eval(a)
+        elif o == '-i' or o == '--ieee-address':
+            conf['ieee_address'] = str(a)
         else:
             assert False, "Unhandled option"
 
@@ -632,6 +661,15 @@ if __name__ == "__main__":
             else:
                 cmd.cmdReset()
                 raise Exception("NO CRC32 match: Local = 0x%x, Target = 0x%x" % (crc_local,crc_target))
+
+        if conf['ieee_address'] != 0:
+            ieee_addr = parse_ieee_address(conf['ieee_address'])
+            mdebug(5, "Setting IEEE address to %s" % (':'.join(['%02x' % ord(b) for b in struct.pack('>Q', ieee_addr)])))
+            ieee_addr_bytes = [ord(b) for b in struct.pack('<Q', ieee_addr)]
+            if cmd.writeMemory(ADDR_IEEE_ADDRESS_SECONDARY, ieee_addr_bytes):
+                mdebug(5, "    Set address done                                ")
+            else:
+                raise CmdException("Set address failed                       ")
 
         if conf['read']:
             length = conf['len']
