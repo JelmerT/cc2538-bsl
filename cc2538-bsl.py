@@ -689,4 +689,4 @@ if __name__ == "__main__":
         cmd.cmdReset()
 
     except Exception, err:
-        print('ERROR: %s' % str(err))
+        exit('ERROR: %s' % str(err))
