@@ -38,6 +38,7 @@
 # More info at https://github.com/JelmerT/cc2538-bsl
 
 from __future__ import print_function
+from subprocess import Popen, PIPE
 
 import sys, getopt
 import serial
@@ -55,6 +56,9 @@ try:
     usepbar = 0
 except:
     usepbar = 0
+
+#version
+VERSION_STRING = "1.0"
 
 # Verbose level
 QUIET = 5
@@ -474,6 +478,18 @@ def parse_ieee_address (inaddr):
                 raise ValueError("IEEE address contains invalid bytes")
         return addr
 
+def print_version():
+    # Get the version using "git describe".
+    try:
+        p = Popen(['git', 'describe', '--tags', '--match', '[0-9]*'],
+                  stdout=PIPE, stderr=PIPE)
+        p.stderr.close()
+        line = p.stdout.readlines()[0]
+        version = line.strip()
+    except:
+    #We're not in a git repo, or git failed, use fixed version string.
+        version = VERSION_STRING
+    print('%s %s' % (sys.argv[0], version))
 
 def usage():
     print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [file.bin]
@@ -489,6 +505,7 @@ def usage():
     -b baud                  Baud speed (default: 500000)
     -a addr                  Target address
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
+    --version                Print script version
 
 Examples:
     ./%s -e -w -v example/main.bin
@@ -521,7 +538,7 @@ if __name__ == "__main__":
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address='])
+        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -555,6 +572,9 @@ if __name__ == "__main__":
             conf['len'] = eval(a)
         elif o == '-i' or o == '--ieee-address':
             conf['ieee_address'] = str(a)
+        elif o == '--version':
+            print_version()
+            sys.exit(0)
         else:
             assert False, "Unhandled option"
 
