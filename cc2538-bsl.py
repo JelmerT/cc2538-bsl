@@ -496,14 +496,14 @@ def usage():
     -h                       This help
     -q                       Quiet
     -V                       Verbose
-    -e                       Erase (full)
+    -e                       Erase
     -w                       Write
     -v                       Verify (CRC32 check)
     -r                       Read
-    -l length                Length of read
+    -l length                Length of read or erase (default: 0x80000)
     -p port                  Serial port (default: first USB-like port in /dev)
     -b baud                  Baud speed (default: 500000)
-    -a addr                  Target address
+    -a addr                  Target address (default: 0x00200000)
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
     --version                Print script version
 
@@ -653,9 +653,8 @@ if __name__ == "__main__":
             mdebug(5, "    Target id 0x%x, %s" % (chip_id_num, chip_id_str))
 
         if conf['erase']:
-            # we only do full erase for now (CC2538)
-            address = 0x00200000 #flash start addr for cc2538
-            size = 0x80000 #total flash size cc2538
+            address = conf['address']
+            size = conf['len']
             mdebug(5, "Erasing %s bytes starting at address 0x%x" % (size, address))
 
             if cmd.cmdEraseMemory(address, size):
