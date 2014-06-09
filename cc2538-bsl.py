@@ -188,6 +188,8 @@ class CommandInterface(object):
     def sendSynch(self):
         cmd = 0x55
 
+        self.sp.flushInput() #flush serial input buffer for first ACK reception
+
         mdebug(10, "*** sending synch sequence")
         self.sp.write(chr(cmd)) #send U
         self.sp.write(chr(cmd)) #send U
