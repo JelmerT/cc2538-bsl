@@ -41,7 +41,6 @@ from __future__ import print_function
 from subprocess import Popen, PIPE
 
 import sys, getopt
-import serial
 import glob
 import time
 import tempfile
@@ -65,6 +64,21 @@ QUIET = 5
 
 # Check which version of Python is running
 PY3 = sys.version_info >= (3,0)
+
+try:
+    import serial
+except ImportError:
+    print('{} requires the Python serial library'.format(sys.argv[0]))
+    print('Please install it with one of the following:')
+    print('')
+    if PY3:
+        print('   Ubuntu:  sudo apt-get install python3-serial')
+        print('   Mac:     sudo port install py34-serial')
+    else:
+        print('   Ubuntu:  sudo apt-get install python-serial')
+        print('   Mac:     sudo port install py-serial')
+    sys.exit(1)
+
 
 def mdebug(level, message, attr='\n'):
     if QUIET >= level:
