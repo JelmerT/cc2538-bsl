@@ -89,7 +89,7 @@ class CmdException(Exception):
     pass
 
 class CommandInterface(object):
-    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000) :
+    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000):
         self.sp = serial.Serial(
             port=aport,
             baudrate=abaudrate,     # baudrate
@@ -100,6 +100,17 @@ class CommandInterface(object):
             rtscts=0,               # disable RTS/CTS flow control
             timeout=0.5             # set a timeout value, None for waiting forever
         )
+
+        # Use the DTR and RTS lines to control !RESET and the bootloader pin.
+        # This can automatically invoke the bootloader without the user
+        # having to toggle any pins.
+        # DTR: connected to the bootloader pin
+        # RTS: connected to !RESET
+        self.sp.setDTR(1)
+        self.sp.setRTS(0)
+        self.sp.setRTS(1)
+        self.sp.setRTS(0)
+        self.sp.setDTR(0)
 
     def close(self):
         self.sp.close()
