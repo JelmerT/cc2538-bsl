@@ -49,13 +49,6 @@ import subprocess
 import struct
 import binascii
 
-try:
-    from progressbar import *
-    #TODO fix progressbar
-    usepbar = 0
-except:
-    usepbar = 0
-
 #version
 VERSION_STRING = "1.0"
 
@@ -240,8 +233,8 @@ class CommandInterface(object):
         self.sp.flushInput() #flush serial input buffer for first ACK reception
 
         mdebug(10, "*** sending synch sequence")
-        self._write(cmd) #send U
-        self._write(cmd) #send U
+        self._write(cmd) # send U
+        self._write(cmd) # send U
         return self._wait_for_ack("Synch (0x55 0x55)")
 
     def checkLastCmd(self):
@@ -265,8 +258,8 @@ class CommandInterface(object):
         cmd = 0x20
         lng = 3
 
-        self._write(lng) #send size
-        self._write(cmd) #send checksum
+        self._write(lng) # send size
+        self._write(cmd) # send checksum
         self._write(cmd) # send data
 
         mdebug(10, "*** Ping command (0x20)")
@@ -277,8 +270,8 @@ class CommandInterface(object):
         cmd = 0x25
         lng = 3
 
-        self._write(lng) #send size
-        self._write(cmd) #send checksum
+        self._write(lng) # send size
+        self._write(cmd) # send checksum
         self._write(cmd) # send data
 
         mdebug(10, "*** Reset command (0x25)")
@@ -289,13 +282,13 @@ class CommandInterface(object):
         cmd = 0x28
         lng = 3
 
-        self._write(lng) #send size
-        self._write(cmd) #send checksum
+        self._write(lng) # send size
+        self._write(cmd) # send checksum
         self._write(cmd) # send data
 
         mdebug(10, "*** GetChipId command (0x28)")
         if self._wait_for_ack("Get ChipID (0x28)"):
-            version = self.receivePacket() #4 byte answ, the 2 LSB hold chip ID
+            version = self.receivePacket() # 4 byte answ, the 2 LSB hold chip ID
             if self.checkLastCmd():
                 assert len(version) == 4, "Unreasonable chip id: %s" % repr(version)
                 chip_id = (version[2] << 8) | version[3]
@@ -307,8 +300,8 @@ class CommandInterface(object):
         cmd = 0x23
         lng = 3
 
-        self._write(lng) #send size
-        self._write(cmd) #send checksum
+        self._write(lng) # send size
+        self._write(cmd) # send checksum
         self._write(cmd) # send data
 
         mdebug(10, "*** GetStatus command (0x23)")
@@ -320,8 +313,8 @@ class CommandInterface(object):
         cmd = 0x29
         lng = 3
 
-        self._write(lng) #send size
-        self._write(cmd) #send checksum
+        self._write(lng) # send size
+        self._write(cmd) # send checksum
         self._write(cmd) # send data
 
         mdebug(10, "*** SetXOsc command (0x29)")
@@ -333,10 +326,10 @@ class CommandInterface(object):
         cmd=0x22
         lng=7
 
-        self._write(lng) #send length
-        self._write(self._calc_checks(cmd,addr,0)) #send checksum
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd,addr,0)) # send checksum
         self._write(cmd) # send cmd
-        self._write(self._encode_addr(addr)) #send addr
+        self._write(self._encode_addr(addr)) # send addr
 
         mdebug(10, "*** Run command(0x22)")
         return 1
@@ -345,11 +338,11 @@ class CommandInterface(object):
         cmd=0x26
         lng=11
 
-        self._write(lng) #send length
-        self._write(self._calc_checks(cmd,addr,size)) #send checksum
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd,addr,size)) # send checksum
         self._write(cmd) # send cmd
-        self._write(self._encode_addr(addr)) #send addr
-        self._write(self._encode_addr(size)) #send size
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(self._encode_addr(size)) # send size
 
         mdebug(10, "*** Erase command(0x26)")
         if self._wait_for_ack("Erase memory (0x26)",10):
@@ -359,11 +352,11 @@ class CommandInterface(object):
         cmd=0x27
         lng=11
 
-        self._write(lng) #send length
-        self._write(self._calc_checks(cmd,addr,size)) #send checksum
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd,addr,size)) # send checksum
         self._write(cmd) # send cmd
-        self._write(self._encode_addr(addr)) #send addr
-        self._write(self._encode_addr(size)) #send size
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(self._encode_addr(size)) # send size
 
         mdebug(10, "*** CRC32 command(0x27)")
         if self._wait_for_ack("Get CRC32 (0x27)",1):
@@ -375,14 +368,14 @@ class CommandInterface(object):
         cmd=0x21
         lng=11
 
-        if (size % 4) != 0: #check for invalid data lengths
+        if (size % 4) != 0: # check for invalid data lengths
             raise Exception('Invalid data size: %i. Size must be a multiple of 4.' % size)
 
-        self._write(lng) #send length
-        self._write(self._calc_checks(cmd,addr,size)) #send checksum
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd,addr,size)) # send checksum
         self._write(cmd) # send cmd
-        self._write(self._encode_addr(addr)) #send addr
-        self._write(self._encode_addr(size)) #send size
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(self._encode_addr(size)) # send size
 
         mdebug(10, "*** Download command (0x21)")
         if self._wait_for_ack("Download (0x21)",2):
@@ -391,10 +384,10 @@ class CommandInterface(object):
     def cmdSendData(self, data):
         cmd=0x24
         lng=len(data)+3
-        #TODO: check total size of data!! max 252 bytes!
+        # TODO: check total size of data!! max 252 bytes!
 
-        self._write(lng) #send size
-        self._write((sum(bytearray(data))+cmd)&0xFF) #send checksum
+        self._write(lng) # send size
+        self._write((sum(bytearray(data))+cmd)&0xFF) # send checksum
         self._write(cmd) # send cmd
         self._write(bytearray(data)) # send data
 
@@ -402,33 +395,33 @@ class CommandInterface(object):
         if self._wait_for_ack("Send data (0x24)",10):
             return self.checkLastCmd()
 
-    def cmdMemRead(self, addr): #untested
+    def cmdMemRead(self, addr): # untested
         cmd=0x2A
         lng=8
 
-        self._write(lng) #send length
-        self._write(self._calc_checks(cmd,addr,4)) #send checksum
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd,addr,4)) # send checksum
         self._write(cmd) # send cmd
-        self._write(self._encode_addr(addr)) #send addr
-        self._write(4) #send width, 4 bytes
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(4) # send width, 4 bytes
 
         mdebug(10, "*** Mem Read (0x2A)")
         if self._wait_for_ack("Mem Read (0x2A)",1):
             data = self.receivePacket()
             if self.checkLastCmd():
-                return data#self._decode_addr(ord(data[3]),ord(data[2]),ord(data[1]),ord(data[0]))
+                return data # self._decode_addr(ord(data[3]),ord(data[2]),ord(data[1]),ord(data[0]))
 
-    def cmdMemWrite(self, addr, data, width): #untested
-        #TODO: check width for 1 or 4 and data size
+    def cmdMemWrite(self, addr, data, width): # untested
+        # TODO: check width for 1 or 4 and data size
         cmd=0x2B
         lng=10
 
-        self._write(lng) #send length
-        self._write(self._calc_checks(cmd,addr,0)) #send checksum
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd,addr,0)) # send checksum
         self._write(cmd) # send cmd
-        self._write(self._encode_addr(addr)) #send addr
+        self._write(self._encode_addr(addr)) # send addr
         self._write(bytearray(data)) # send data
-        self._write(width) #send width, 4 bytes
+        self._write(width) # send width, 4 bytes
 
         mdebug(10, "*** Mem write (0x2B)")
         if self._wait_for_ack("Mem Write (0x2B)",2):
@@ -439,11 +432,11 @@ class CommandInterface(object):
 
     def writeMemory(self, addr, data):
         lng = len(data)
-        trsf_size = 248 #amount of data bytes transferred per packet (theory: max 252 + 3)
+        trsf_size = 248 # amount of data bytes transferred per packet (theory: max 252 + 3)
         if PY3:
-            empty_packet = b'\xff'*trsf_size #empty packet (filled with 0xFF)
+            empty_packet = b'\xff'*trsf_size # empty packet (filled with 0xFF)
         else:
-            empty_packet = [255]*trsf_size #empty packet (filled with 0xFF)
+            empty_packet = [255]*trsf_size # empty packet (filled with 0xFF)
 
         # Boot loader enable check
         # TODO: implement check for all chip sizes & take into account partial firmware uploads
@@ -458,10 +451,6 @@ class CommandInterface(object):
         mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)X" %
                { 'lng': lng, 'addr': addr})
 
-        if usepbar:
-            widgets = ['Writing: ', Percentage(),' ', ETA(), ' ', Bar()]
-            pbar = ProgressBar(widgets=widgets, maxval=lng, term_width=79).start()
-
         offs = 0
         addr_set = 0
 
@@ -470,26 +459,21 @@ class CommandInterface(object):
                 if addr_set != 1:
                     self.cmdDownload(addr,lng) #set starting address if not set
                     addr_set = 1
-                if usepbar:
-                    pbar.update(pbar.maxval-lng)
-                else:
-                    mdebug(5, " Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': trsf_size}, '\r')
-                    sys.stdout.flush()
-                self.cmdSendData(data[offs:offs+trsf_size]) #send next data packet
-            else:   #skipped packet, address needs to be set
+
+                mdebug(5, " Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': trsf_size}, '\r')
+                sys.stdout.flush()
+
+                self.cmdSendData(data[offs:offs+trsf_size]) # send next data packet
+            else:   # skipped packet, address needs to be set
                 addr_set = 0
 
             offs = offs + trsf_size
             addr = addr + trsf_size
             lng = lng - trsf_size
 
-        if usepbar:
-            pbar.update(pbar.maxval-lng)
-            pbar.finish()
-        else:
-            mdebug(5, "Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': lng}, '\r')
+        mdebug(5, "Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': lng}, '\r')
         self.cmdDownload(addr,lng)
-        return self.cmdSendData(data[offs:offs+lng]) #send last data packet
+        return self.cmdSendData(data[offs:offs+lng]) # send last data packet
 
 def query_yes_no(question, default="yes"):
     valid = {"yes":True,   "y":True,  "ye":True,
@@ -546,7 +530,7 @@ def print_version():
         line = p.stdout.readlines()[0]
         version = line.strip()
     except:
-    #We're not in a git repo, or git failed, use fixed version string.
+    # We're not in a git repo, or git failed, use fixed version string.
         version = VERSION_STRING
     print('%s %s' % (sys.argv[0], version))
 
@@ -641,8 +625,8 @@ if __name__ == "__main__":
             assert False, "Unhandled option"
 
     try:
-        #Sanity checks
-        if conf['write'] or conf['read'] or conf['verify']:    #check for input/output file
+        # Sanity checks
+        if conf['write'] or conf['read'] or conf['verify']:    # check for input/output file
             try:
                 args[0]
             except:
@@ -724,7 +708,7 @@ if __name__ == "__main__":
                 raise CmdException("Erase failed")
 
         if conf['write']:
-            #TODO: check if boot loader back-door is open, need to read flash size first to get address
+            # TODO: check if boot loader back-door is open, need to read flash size first to get address
             if cmd.writeMemory(conf['address'], data):
                 mdebug(5, "    Write done                                ")
             else:
@@ -758,7 +742,7 @@ if __name__ == "__main__":
 
         if conf['read']:
             length = conf['len']
-            if length < 4:  #reading 4 bytes at a time
+            if length < 4:  # reading 4 bytes at a time
                 length = 4
             else:
                 length = length + (length % 4)
