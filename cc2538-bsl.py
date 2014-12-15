@@ -50,7 +50,7 @@ import struct
 import binascii
 
 #version
-VERSION_STRING = "1.0"
+VERSION_STRING = "1.1"
 
 # Verbose level
 QUIET = 5
