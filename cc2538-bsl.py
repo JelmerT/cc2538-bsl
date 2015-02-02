@@ -120,6 +120,9 @@ class CommandInterface(object):
         self.sp.setRTS(0)
         self.sp.setRTS(1)
         self.sp.setRTS(0)
+        time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
+                           # comes out of reset. This fixes an issue where there
+                           # wasn't enough delay here on Mac.
         self.sp.setDTR(0)
 
     def close(self):
