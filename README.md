@@ -38,7 +38,9 @@ If you found a bug or improved some part of the code, please submit an issue or 
 
 #####Authors   
 Jelmer Tiete (c) 2014, <jelmer@tiete.be>   
-Loosly based on [stm32loader] by Ivan A-R <ivan@tuxotronic.org>
+Loosly based on [stm32loader] by Ivan A-R <ivan@tuxotronic.org>   
+
+[![Analytics](https://ga-beacon.appspot.com/UA-3496907-10/JelmerT/cc2538-bsl?pixel)](https://github.com/igrigorik/ga-beacon)
 
 [python]: http://www.python.org/download/ "Python Download"
 [contiki cc2538dk]: https://github.com/contiki-os/contiki/tree/master/platform/cc2538dk "Contiki CC2538DK readme"
