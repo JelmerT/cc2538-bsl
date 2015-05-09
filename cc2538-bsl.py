@@ -55,6 +55,10 @@ VERSION_STRING = "1.1"
 # Verbose level
 QUIET = 5
 
+# DTR/RTS levels
+HIGH = False
+LOW  = True 
+
 # Check which version of Python is running
 PY3 = sys.version_info >= (3,0)
 
@@ -97,9 +101,26 @@ ADDR_IEEE_ADDRESS_SECONDARY = 0x0027ffcc
 
 class CmdException(Exception):
     pass
-
+    
 class CommandInterface(object):
-    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000):
+    # Use the DTR and RTS lines to control reset and the bootloader pin.
+    # This can automatically invoke the bootloader without the user
+    # having to toggle any pins.
+    # DTR: connected to the reset pin
+    # RTS: connected to bootload pin (PA6 for OpenMote-CC2538)
+    def bsl_start(self, ser):
+        ser.setRTS(LOW)  # Reset board
+        ser.setDTR(LOW)  # Enable bootloader
+        time.sleep(0.1)  # Delay to ensure the pin has been toggled
+        ser.setDTR(HIGH) # Unreset board
+
+    def bsl_stop(self, ser):
+        ser.setDTR(LOW)  # Reset board
+        ser.setRTS(HIGH) # Disable bootloader
+        time.sleep(0.1)  # Delay to ensure the pin has been toggled
+        ser.setDTR(HIGH) # Unreset board
+
+    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000, bsl=False):
         self.sp = serial.Serial(
             port=aport,
             baudrate=abaudrate,     # baudrate
@@ -110,24 +131,14 @@ class CommandInterface(object):
             rtscts=0,               # disable RTS/CTS flow control
             timeout=0.5             # set a timeout value, None for waiting forever
         )
+        
+        if (bsl == True):
+            self.bsl_start(self.sp)
 
-        # Use the DTR and RTS lines to control !RESET and the bootloader pin.
-        # This can automatically invoke the bootloader without the user
-        # having to toggle any pins.
-        # DTR: connected to the bootloader pin
-        # RTS: connected to !RESET
-        self.sp.setDTR(1)
-        self.sp.setRTS(0)
-        self.sp.setRTS(1)
-        self.sp.setRTS(0)
-        time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
-                           # comes out of reset. This fixes an issue where there
-                           # wasn't enough delay here on Mac.
-        self.sp.setDTR(0)
-
-    def close(self):
+    def close(self, bsl=False):
+        if (bsl == True): 
+            self.bsl_stop(self.sp)
         self.sp.close()
-
 
     def _wait_for_ack(self, info="", timeout=0):
         stop = time.time() + timeout
@@ -551,6 +562,7 @@ def usage():
     -b baud                  Baud speed (default: 500000)
     -a addr                  Target address
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
+    --bsl                    Use the DTR/RTS lines to trigger the bsl mode
     --version                Print script version
 
 Examples:
@@ -582,12 +594,13 @@ if __name__ == "__main__":
             'len': 0x80000,
             'fname':'',
             'ieee_address': 0,
+            'bsl': False
         }
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i", ['ieee-address=', 'version', 'bsl'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -621,6 +634,8 @@ if __name__ == "__main__":
             conf['len'] = eval(a)
         elif o == '-i' or o == '--ieee-address':
             conf['ieee_address'] = str(a)
+        elif o == '--bsl':
+            conf['bsl'] = True
         elif o == '--version':
             print_version()
             sys.exit(0)
@@ -664,7 +679,7 @@ if __name__ == "__main__":
                 raise Exception('No serial port found.')
 
         cmd = CommandInterface()
-        cmd.open(conf['port'], conf['baud'])
+        cmd.open(conf['port'], conf['baud'], bsl=conf['bsl'])
         mdebug(5, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],
                                                       'baud':conf['baud']})
         if conf['write'] or conf['verify']:
@@ -678,9 +693,9 @@ if __name__ == "__main__":
 
         if conf['force_speed'] != 1:
             if cmd.cmdSetXOsc(): #switch to external clock source
-                cmd.close()
+                cmd.close(bsl=conf['bsl'])
                 conf['baud']=1000000
-                cmd.open(conf['port'], conf['baud'])
+                cmd.open(conf['port'], conf['baud'], bsl=conf['bsl'])
                 mdebug(6, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],'baud':conf['baud']})
                 mdebug(6, "Reconnecting to target at higher speed...")
                 if (cmd.sendSynch()!=1):
@@ -759,6 +774,7 @@ if __name__ == "__main__":
             mdebug(5, "    Read done                                ")
 
         cmd.cmdReset()
+        cmd.close(bsl=conf['bsl'])
 
     except Exception as err:
         exit('ERROR: %s' % str(err))
