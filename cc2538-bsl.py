@@ -56,8 +56,8 @@ VERSION_STRING = "1.1"
 QUIET = 5
 
 # DTR/RTS levels
-HIGH = True
-LOW  = False 
+HIGH = False
+LOW  = True 
 
 # Check which version of Python is running
 PY3 = sys.version_info >= (3,0)
@@ -103,19 +103,22 @@ class CmdException(Exception):
     pass
     
 class CommandInterface(object):
+    # Use the DTR and RTS lines to control reset and the bootloader pin.
+    # This can automatically invoke the bootloader without the user
+    # having to toggle any pins.
+    # DTR: connected to the reset pin
+    # RTS: connected to bootload pin (PA6 for OpenMote-CC2538)
     def bsl_start(self, ser):
-        ser.setRTS(HIGH)
-        ser.setDTR(HIGH)
-        time.sleep(0.1)
-        ser.setRTS(HIGH)
-        time.sleep(0.1)
-        ser.setDTR(LOW)
+        ser.setRTS(LOW)  # Reset board
+        ser.setDTR(LOW)  # Enable bootloader
+        time.sleep(0.1)  # Delay to ensure the pin has been toggled
+        ser.setDTR(HIGH) # Unreset board
 
     def bsl_stop(self, ser):
-        ser.setDTR(HIGH)
-        time.sleep(0.1)
-        ser.setRTS(LOW)
-        ser.setDTR(LOW)
+        ser.setDTR(LOW)  # Reset board
+        ser.setRTS(HIGH) # Disable bootloader
+        time.sleep(0.1)  # Delay to ensure the pin has been toggled
+        ser.setDTR(HIGH) # Unreset board
 
     def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000, bsl=False):
         self.sp = serial.Serial(
