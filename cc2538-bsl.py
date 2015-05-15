@@ -95,6 +95,12 @@ COMMAND_RET_FLASH_FAIL = 0x44
 
 ADDR_IEEE_ADDRESS_SECONDARY = 0x0027ffcc
 
+FLASH_CCA_BOOTLDR_ADDRESS = 0x0027ffd4
+if PY3:
+    FLASH_CCA_BOOTLDR_CLOSED = struct.pack('<L', 0xefffffff)
+else:
+    FLASH_CCA_BOOTLDR_CLOSED = [ord(b) for b in struct.pack('<L', 0xefffffff)]
+
 class CmdException(Exception):
     pass
 
@@ -551,6 +557,7 @@ def usage():
     -b baud                  Baud speed (default: 500000)
     -a addr                  Target address
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
+    --disable-bootloader     After finishing, disable the bootloader
     --version                Print script version
 
 Examples:
@@ -582,12 +589,13 @@ if __name__ == "__main__":
             'len': 0x80000,
             'fname':'',
             'ieee_address': 0,
+            'disable-bootloader': 0
         }
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=', 'disable-bootloader', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -621,6 +629,8 @@ if __name__ == "__main__":
             conf['len'] = eval(a)
         elif o == '-i' or o == '--ieee-address':
             conf['ieee_address'] = str(a)
+        elif o == '--disable-bootloader':
+            conf['disable-bootloader'] = 1
         elif o == '--version':
             print_version()
             sys.exit(0)
@@ -757,6 +767,16 @@ if __name__ == "__main__":
                 mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address']+(i*4), ord(rdata[3]), ord(rdata[2]), ord(rdata[1]), ord(rdata[0])), '\r')
                 file(args[0], 'ab').write(''.join(reversed(rdata)))
             mdebug(5, "    Read done                                ")
+
+        if conf['disable-bootloader']:
+            if not query_yes_no("Disabling the bootloader will prevent you from "\
+                                "using this script until you re-enable the bootloader "\
+                                "using JTAG. Do you want to continue?","no"):
+                raise Exception('Aborted by user.')
+            if cmd.writeMemory(FLASH_CCA_BOOTLDR_ADDRESS, FLASH_CCA_BOOTLDR_CLOSED):
+                mdebug(5, "    Set bootloader closed done                      ")
+            else:
+                raise CmdException("Set bootloader closed failed             ")
 
         cmd.cmdReset()
 
