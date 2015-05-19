@@ -175,19 +175,34 @@ class CommandInterface(object):
                  +cmd)
                 &0xFF)
 
-    def _write(self, data):
+    def _write(self, data, is_retry=False):
         if PY3:
             if type(data) == int:
-                self.sp.write(bytes([data]))
+                assert data < 256
+                goal = 1
+                written = self.sp.write(bytes([data]))
             elif type(data) == bytes or type(data) == bytearray:
-                self.sp.write(data)
+                goal = len(data)
+                written = self.sp.write(data)
             else:
                 raise CmdException("Internal Error. Bad data type: {}".format(type(data)))
         else:
             if type(data) == int:
-                self.sp.write(chr(data))
+                assert data < 256
+                goal = 1
+                written = self.sp.write(chr(data))
             else:
-                self.sp.write(data)
+                goal = len(data)
+                written = self.sp.write(data)
+        if written < goal:
+            mdebug(10, "*** Only wrote {} of target {} bytes".format(written, goal))
+            if is_retry and written == 0:
+                raise CmdException("Failed to write data on the serial bus")
+            mdebug(10, "*** Retrying write for remainder")
+            if type(data) == int:
+                return self._write(data, is_retry=True)
+            else:
+                return self._write(data[written:], is_retry=True)
 
     def _read(self, length):
         got = self.sp.read(length)
