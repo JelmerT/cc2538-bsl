@@ -181,6 +181,8 @@ class CommandInterface(object):
                 self.sp.write(bytes([data]))
             elif type(data) == bytes or type(data) == bytearray:
                 self.sp.write(data)
+            else:
+                raise CmdException("Internal Error. Bad data type: {}".format(type(data)))
         else:
             if type(data) == int:
                 self.sp.write(chr(data))
@@ -195,13 +197,13 @@ class CommandInterface(object):
             return [ord(x) for x in got]
 
     def sendAck(self):
-        self._write(chr(0x00))
+        self._write(0x00)
         self._write(0xCC)
         return
 
     def sendNAck(self):
-        self._write(chr(0x00))
-        self._write(chr(0x33))
+        self._write(0x00)
+        self._write(0x33)
         return
 
 
