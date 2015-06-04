@@ -111,6 +111,7 @@ class CommandInterface(object):
             timeout=0.5             # set a timeout value, None for waiting forever
         )
 
+    def invoke_bootloader(self):
         # Use the DTR and RTS lines to control !RESET and the bootloader pin.
         # This can automatically invoke the bootloader without the user
         # having to toggle any pins.
@@ -682,6 +683,7 @@ if __name__ == "__main__":
 
         cmd = CommandInterface()
         cmd.open(conf['port'], conf['baud'])
+        cmd.invoke_bootloader()
         mdebug(5, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],
                                                       'baud':conf['baud']})
         if conf['write'] or conf['verify']:
