@@ -669,7 +669,7 @@ if __name__ == "__main__":
             ports = []
 
             # Get a list of all USB-like names in /dev
-            for name in ['tty.usbserial', 'ttyUSB', 'tty.usbmodem']:
+            for name in ['tty.usbserial', 'ttyUSB', 'tty.usbmodem', 'tty.SLAB_USBtoUART']:
                 ports.extend(glob.glob('/dev/%s*' % name))
 
             ports = sorted(ports)
