@@ -590,7 +590,7 @@ if __name__ == "__main__":
             'port': 'auto',
             'baud': 500000,
             'force_speed' : 0,
-            'address': 0x00200000,
+            'address': 0x00000000,
             'erase': 0,
             'write': 0,
             'verify': 0,
