@@ -355,17 +355,15 @@ class CommandInterface(object):
         return 1
 
     def cmdEraseMemory(self, addr, size):
-        cmd=0x26
-        lng=11
+        cmd=0x2C
+        lng=3
 
         self._write(lng) # send length
-        self._write(self._calc_checks(cmd,addr,size)) # send checksum
+        self._write(cmd) # send checksum
         self._write(cmd) # send cmd
-        self._write(self._encode_addr(addr)) # send addr
-        self._write(self._encode_addr(size)) # send size
 
-        mdebug(10, "*** Erase command(0x26)")
-        if self._wait_for_ack("Erase memory (0x26)",10):
+        mdebug(10, "*** Bank Erase command(0x2C)")
+        if self._wait_for_ack("Bank Erase (0x2C)",10):
             return self.checkLastCmd()
 
     def cmdCRC32(self, addr, size):
