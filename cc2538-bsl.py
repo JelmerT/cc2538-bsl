@@ -692,6 +692,15 @@ if __name__ == "__main__":
         if not cmd.sendSynch():
             raise CmdException("Can't connect to target. Ensure boot loader is started. (no answer on synch sequence)")
 
+        chip_id = cmd.cmdGetChipId()
+        chip_id_str = CHIP_ID_STRS.get(chip_id, None)
+
+        if chip_id_str is None:
+            mdebug(0, 'Warning: unrecognized chip ID 0x%x' % chip_id)
+            conf['force_speed'] = 1
+        else:
+            mdebug(5, "    Target id 0x%x, %s" % (chip_id, chip_id_str))
+
         if conf['force_speed'] != 1:
             if cmd.cmdSetXOsc(): #switch to external clock source
                 cmd.close()
@@ -706,14 +715,6 @@ if __name__ == "__main__":
 
         # if (cmd.cmdPing() != 1):
         #     raise CmdException("Can't connect to target. Ensure boot loader is started. (no answer on ping command)")
-
-        chip_id = cmd.cmdGetChipId()
-        chip_id_str = CHIP_ID_STRS.get(chip_id, None)
-
-        if chip_id_str is None:
-            mdebug(0, 'Warning: unrecognized chip ID 0x%x' % chip_id)
-        else:
-            mdebug(5, "    Target id 0x%x, %s" % (chip_id, chip_id_str))
 
         if conf['erase']:
             # we only do full erase for now (CC2538)
