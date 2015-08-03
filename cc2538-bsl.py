@@ -370,13 +370,14 @@ class CommandInterface(object):
 
     def cmdCRC32(self, addr, size):
         cmd=0x27
-        lng=11
+        lng=15
 
         self._write(lng) # send length
         self._write(self._calc_checks(cmd,addr,size)) # send checksum
         self._write(cmd) # send cmd
         self._write(self._encode_addr(addr)) # send addr
         self._write(self._encode_addr(size)) # send size
+        self._write(self._encode_addr(0x00000000)) # send number of reads
 
         mdebug(10, "*** CRC32 command(0x27)")
         if self._wait_for_ack("Get CRC32 (0x27)",1):
