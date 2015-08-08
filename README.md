@@ -35,6 +35,23 @@ You can find more info on the different options by executing `python cc2538-bsl.
 
 If you found a bug or improved some part of the code, please submit an issue or pull request.
 
+###CC26xx Support
+Branch `feature/CC26xx_support` of this script supports programming TI's CC26xx family of chips, but bear in mind that this branch will not support the CC2538. Ultimately, support for both chips will be merged into master, but for the time being you will have to switch around depending what you wish to program.
+
+The script has been tested with SmartRF06EB + CC2650 EM. The physical wiring on the CC2650 Sensortag does not meet the ROM bootloader's requirements in terms of serial interface configuration. For that reason, interacting with the Sensortag via this script is impossible.
+
+The ROM bootloader is configured through the `BL_CONFIG` 'register' in CCFG. `BOOTLOADER_ENABLE` should be set to `0xC5` to enable the bootloader in the first place.
+
+This is enough if the chip has not been programmed with a valid image. If a valid image is present, then the remaining fields of `BL_CONFIG` and the `ERASE_CONF` register must also be configured correctly:
+
+* Select a DIO by setting `BL_PIN_NUMBER`
+* Select an active level (low/high) for the DIO by setting `BL_LEVEL`
+* Enable 'failure analysis' by setting `BL_ENABLE` to `0xC5`
+* Make sure the `BANK_ERASE` command is enabled: The `BANK_ERASE_DIS_N` bit in the `ERASE_CONF` register in CCFG must be set. `BANK_ERASE` is enabled by default.
+
+Similar to the CC2538, the bootloader will be activated if, at the time of reset, failure analysis is enabled and the selected DIO is found to be at the active level.
+
+These settings are very useful for development, but enabling failure analysis in a deployed firmware may allow a malicious user to read out the contents of your device's flash or to erase it. Do not enable this in a deployment unless you understand the security implications.
 
 #####Authors   
 Jelmer Tiete (c) 2014, <jelmer@tiete.be>   
