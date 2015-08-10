@@ -779,5 +779,6 @@ if __name__ == "__main__":
         cmd.cmdReset()
 
     except Exception as err:
-        traceback.print_exc()
+        if QUIET >= 10:
+            traceback.print_exc()
         exit('ERROR: %s' % str(err))
