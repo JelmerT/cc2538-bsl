@@ -48,6 +48,7 @@ import os
 import subprocess
 import struct
 import binascii
+import numbers
 
 #version
 VERSION_STRING = "1.1"
@@ -266,13 +267,17 @@ class CommandInterface(object):
             mdebug(10, "Command Successful")
             return 1
         else:
-            stat_str = RETURN_CMD_STRS.get(stat, None)
-            if stat_str is None:
-                mdebug(0, 'Warning: unrecognized status returned 0x%x' % stat)
+            stat_str = RETURN_CMD_STRS.get(stat[0], None)
+        
+        if stat_str is None:
+            if isinstance(stat, list) and isinstance(stat[0], numbers.Number):
+                stat_number_str = ('0x%x' % stat[0])
             else:
-                mdebug(0, "Target returned: 0x%x, %s" % (stat, stat_str))
-            return 0
-
+                stat_number_str = str(stat[0])
+            mdebug(0, 'Warning: unrecognized status returned %s' % stat_number_str)
+        else:
+            mdebug(0, "Target returned: 0x%x, %s" % (stat[0], stat_str))
+        return 0
 
     def cmdPing(self):
         cmd = 0x20
