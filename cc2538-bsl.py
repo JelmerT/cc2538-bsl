@@ -99,7 +99,7 @@ class CmdException(Exception):
     pass
 
 class CommandInterface(object):
-    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000, dtr_active_low=True):
+    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000, dtr_active_high=False):
         self.sp = serial.Serial(
             port=aport,
             baudrate=abaudrate,     # baudrate
@@ -116,14 +116,14 @@ class CommandInterface(object):
         # having to toggle any pins.
         # DTR: connected to the bootloader pin
         # RTS: connected to !RESET
-        self.sp.setDTR(1 if dtr_active_low else 0)
+        self.sp.setDTR(1 if not dtr_active_high else 0)
         self.sp.setRTS(0)
         self.sp.setRTS(1)
         self.sp.setRTS(0)
         time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
                            # comes out of reset. This fixes an issue where there
                            # wasn't enough delay here on Mac.
-        self.sp.setDTR(0 if dtr_active_low else 1)
+        self.sp.setDTR(0 if not dtr_active_high else 1)
 
     def close(self):
         self.sp.close()
@@ -537,7 +537,7 @@ def print_version():
     print('%s %s' % (sys.argv[0], version))
 
 def usage():
-    print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--dtr_active_high] [file.bin]
+    print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader_active_high] [file.bin]
     -h                       This help
     -q                       Quiet
     -V                       Verbose
@@ -550,7 +550,7 @@ def usage():
     -b baud                  Baud speed (default: 500000)
     -a addr                  Target address
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
-    --dtr_active_high        Use active high DTR to enter bootloader
+    --bootloader_active_high Use active high signals to enter bootloader
     --version                Print script version
 
 Examples:
@@ -582,13 +582,13 @@ if __name__ == "__main__":
             'len': 0x80000,
             'fname':'',
             'ieee_address': 0,
-            'dtr_active_low': True,
+            'bootloader_active_high': False,
         }
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=','dtr_active_high', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=','bootloader_active_high', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -622,8 +622,8 @@ if __name__ == "__main__":
             conf['len'] = eval(a)
         elif o == '-i' or o == '--ieee-address':
             conf['ieee_address'] = str(a)
-        elif o == '--dtr_active_high':
-            conf['dtr_active_low'] = False
+        elif o == '--bootloader_active_high':
+            conf['bootloader_active_high'] = True
         elif o == '--version':
             print_version()
             sys.exit(0)
@@ -667,7 +667,7 @@ if __name__ == "__main__":
                 raise Exception('No serial port found.')
 
         cmd = CommandInterface()
-        cmd.open(conf['port'], conf['baud'], conf['dtr_active_low'])
+        cmd.open(conf['port'], conf['baud'], conf['bootloader_active_high'])
         mdebug(5, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],
                                                       'baud':conf['baud']})
         if conf['write'] or conf['verify']:
@@ -683,7 +683,7 @@ if __name__ == "__main__":
             if cmd.cmdSetXOsc(): #switch to external clock source
                 cmd.close()
                 conf['baud']=1000000
-                cmd.open(conf['port'], conf['baud'], conf['dtr_active_low'])
+                cmd.open(conf['port'], conf['baud'], conf['bootloader_active_high'])
                 mdebug(6, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],'baud':conf['baud']})
                 mdebug(6, "Reconnecting to target at higher speed...")
                 if (cmd.sendSynch()!=1):
