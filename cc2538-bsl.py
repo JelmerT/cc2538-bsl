@@ -531,6 +531,62 @@ class CommandInterface(object):
         self.cmdDownload(addr,lng)
         return self.cmdSendData(data[offs:offs+lng]) # send last data packet
 
+class Chip(object):
+    def __init__(self, command_interface):
+        self.command_interface = command_interface
+
+        # Some defaults. The child can override.
+        self.flash_start_addr = 0x00000000
+        self.has_cmd_set_xosc = False
+
+    def crc(self, address, size):
+        return getattr(self.command_interface, self.crc_cmd)(address, size)
+
+    def disable_bootloader(self):
+        if not (conf['force'] or query_yes_no("Disabling the bootloader will prevent you from "\
+                            "using this script until you re-enable the bootloader "\
+                            "using JTAG. Do you want to continue?", "no")):
+            raise Exception('Aborted by user.')
+
+        if PY3:
+            pattern = struct.pack('<L', self.bootloader_dis_val)
+        else:
+            pattern = [ord(b) for b in struct.pack('<L', self.bootloader_dis_val)]
+
+        if cmd.writeMemory(self.bootloader_address, pattern):
+            mdebug(5, "    Set bootloader closed done                      ")
+        else:
+            raise CmdException("Set bootloader closed failed             ")
+
+class CC2538(Chip):
+    def __init__(self, command_interface):
+        super(CC2538, self).__init__(command_interface)
+        self.flash_start_addr = 0x00200000
+        self.addr_ieee_address_secondary = 0x0027ffcc
+        self.has_cmd_set_xosc = True
+        self.bootloader_address = 0x0027ffd4
+        self.bootloader_dis_val = 0xefffffff
+        self.crc_cmd = "cmdCRC32"
+
+        #ToDo: Flash size auto-detection
+        self.size = 0x80000
+
+    def erase(self):
+        mdebug(5, "Erasing %s bytes starting at address 0x%08X" % (self.size, self.flash_start_addr))
+        return self.command_interface.cmdEraseMemory(self.flash_start_addr, self.size)
+
+class CC26xx(Chip):
+    def __init__(self, command_interface):
+        super(CC26xx, self).__init__(command_interface)
+        self.addr_ieee_address_secondary = 0x0001FFC8
+        self.bootloader_address = 0x0001FFD8
+        self.bootloader_dis_val = 0x00000000
+        self.crc_cmd = "cmdCRC32CC26xx"
+
+    def erase(self):
+        mdebug(5, "Erasing all main bank flash sectors")
+        return self.command_interface.cmdBankErase()
+
 def query_yes_no(question, default="yes"):
     valid = {"yes":True,   "y":True,  "ye":True,
              "no":False,     "n":False}
