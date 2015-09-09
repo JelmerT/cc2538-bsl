@@ -311,6 +311,7 @@ class CommandInterface(object):
             version = self.receivePacket() # 4 byte answ, the 2 LSB hold chip ID
             if self.checkLastCmd():
                 assert len(version) == 4, "Unreasonable chip id: %s" % repr(version)
+                mdebug(5, "    Version 0x%02X%02X%02X%02X" % tuple(version))
                 chip_id = (version[2] << 8) | version[3]
                 return chip_id
             else:
@@ -809,9 +810,11 @@ if __name__ == "__main__":
         chip_id_str = CHIP_ID_STRS.get(chip_id, None)
 
         if chip_id_str is None:
-            mdebug(0, 'Warning: unrecognized chip ID 0x%x' % chip_id)
+            mdebug(0, 'Warning: unrecognized chip ID. Selecting CC13xx/CC26xx')
+            device = CC26xx(cmd)
         else:
             mdebug(5, "    Target id 0x%x, %s" % (chip_id, chip_id_str))
+            device = CC2538(cmd)
 
         if conf['erase']:
             # we only do full erase for now (CC2538)
