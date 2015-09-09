@@ -838,7 +838,7 @@ if __name__ == "__main__":
             mdebug(5,"Verifying by comparing CRC32 calculations.")
 
             crc_local = (binascii.crc32(bytearray(data))& 0xffffffff)
-            crc_target = cmd.cmdCRC32(conf['address'],len(data)) #CRC of target will change according to length input file
+            crc_target = device.crc(conf['address'], len(data)) #CRC of target will change according to length input file
 
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
