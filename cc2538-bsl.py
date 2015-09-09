@@ -94,12 +94,6 @@ COMMAND_RET_INVALID_CMD = 0x42
 COMMAND_RET_INVALID_ADR = 0x43
 COMMAND_RET_FLASH_FAIL = 0x44
 
-FLASH_CCA_BOOTLDR_ADDRESS = 0x0027ffd4
-if PY3:
-    FLASH_CCA_BOOTLDR_CLOSED = struct.pack('<L', 0xefffffff)
-else:
-    FLASH_CCA_BOOTLDR_CLOSED = [ord(b) for b in struct.pack('<L', 0xefffffff)]
-
 class CmdException(Exception):
     pass
 
@@ -879,14 +873,7 @@ if __name__ == "__main__":
             mdebug(5, "    Read done                                ")
 
         if conf['disable-bootloader']:
-            if not ( conf['force'] or query_yes_no("Disabling the bootloader will prevent you from "\
-                                "using this script until you re-enable the bootloader "\
-                                "using JTAG. Do you want to continue?","no") ):
-                raise Exception('Aborted by user.')
-            if cmd.writeMemory(FLASH_CCA_BOOTLDR_ADDRESS, FLASH_CCA_BOOTLDR_CLOSED):
-                mdebug(5, "    Set bootloader closed done                      ")
-            else:
-                raise CmdException("Set bootloader closed failed             ")
+            device.disable_bootloader()
 
         cmd.cmdReset()
 
