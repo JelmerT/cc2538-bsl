@@ -476,7 +476,7 @@ class CommandInterface(object):
                     "Do you want to continue?","no") ):
                     raise Exception('Aborted by user.')
 
-        mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)X" %
+        mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)08X" %
                { 'lng': lng, 'addr': addr})
 
         offs = 0
@@ -487,7 +487,7 @@ class CommandInterface(object):
                 if addr_set != 1:
                     self.cmdDownload(addr,lng) #set starting address if not set
                     addr_set = 1
-                mdebug(5, " Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': trsf_size}, '\r')
+                mdebug(5, " Write %(len)d bytes at 0x%(addr)08X" % {'addr': addr, 'len': trsf_size}, '\r')
                 sys.stdout.flush()
 
                 self.cmdSendData(data[offs:offs+trsf_size]) # send next data packet
@@ -498,7 +498,7 @@ class CommandInterface(object):
             addr = addr + trsf_size
             lng = lng - trsf_size
 
-        mdebug(5, "Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': lng}, '\r')
+        mdebug(5, "Write %(len)d bytes at 0x%(addr)08X" % {'addr': addr, 'len': lng})
         self.cmdDownload(addr,lng)
         return self.cmdSendData(data[offs:offs+lng]) # send last data packet
 
