@@ -94,8 +94,6 @@ COMMAND_RET_INVALID_CMD = 0x42
 COMMAND_RET_INVALID_ADR = 0x43
 COMMAND_RET_FLASH_FAIL = 0x44
 
-ADDR_IEEE_ADDRESS_SECONDARY = 0x0027ffcc
-
 FLASH_CCA_BOOTLDR_ADDRESS = 0x0027ffd4
 if PY3:
     FLASH_CCA_BOOTLDR_CLOSED = struct.pack('<L', 0xefffffff)
@@ -860,7 +858,7 @@ if __name__ == "__main__":
                 mdebug(5, "Setting IEEE address to %s" % (':'.join(['%02x' % ord(b) for b in struct.pack('>Q', ieee_addr)])))
                 ieee_addr_bytes = [ord(b) for b in struct.pack('<Q', ieee_addr)]
 
-            if cmd.writeMemory(ADDR_IEEE_ADDRESS_SECONDARY, ieee_addr_bytes):
+            if cmd.writeMemory(device.addr_ieee_address_secondary, ieee_addr_bytes):
                 mdebug(5, "    Set address done                                ")
             else:
                 raise CmdException("Set address failed                       ")
