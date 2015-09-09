@@ -791,18 +791,6 @@ if __name__ == "__main__":
         if not cmd.sendSynch():
             raise CmdException("Can't connect to target. Ensure boot loader is started. (no answer on synch sequence)")
 
-        if conf['force_speed'] != 1:
-            if cmd.cmdSetXOsc(): #switch to external clock source
-                cmd.close()
-                conf['baud']=1000000
-                cmd.open(conf['port'], conf['baud'])
-                mdebug(6, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],'baud':conf['baud']})
-                mdebug(6, "Reconnecting to target at higher speed...")
-                if (cmd.sendSynch()!=1):
-                    raise CmdException("Can't connect to target after clock source switch. (Check external crystal)")
-            else:
-                raise CmdException("Can't switch target to external clock source. (Try forcing speed)")
-
         # if (cmd.cmdPing() != 1):
         #     raise CmdException("Can't connect to target. Ensure boot loader is started. (no answer on ping command)")
 
@@ -820,6 +808,17 @@ if __name__ == "__main__":
         if conf['address'] is None:
             conf['address'] = device.flash_start_addr
 
+        if conf['force_speed'] != 1 and device.has_cmd_set_xosc:
+            if cmd.cmdSetXOsc(): #switch to external clock source
+                cmd.close()
+                conf['baud'] = 1000000
+                cmd.open(conf['port'], conf['baud'])
+                mdebug(6, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'], 'baud':conf['baud']})
+                mdebug(6, "Reconnecting to target at higher speed...")
+                if (cmd.sendSynch() != 1):
+                    raise CmdException("Can't connect to target after clock source switch. (Check external crystal)")
+            else:
+                raise CmdException("Can't switch target to external clock source. (Try forcing speed)")
 
         if conf['erase']:
             # we only do full erase for now
