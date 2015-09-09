@@ -679,7 +679,7 @@ if __name__ == "__main__":
             'port': 'auto',
             'baud': 500000,
             'force_speed' : 0,
-            'address': 0x00200000,
+            'address': None,
             'force': 0,
             'erase': 0,
             'write': 0,
@@ -815,6 +815,10 @@ if __name__ == "__main__":
         else:
             mdebug(5, "    Target id 0x%x, %s" % (chip_id, chip_id_str))
             device = CC2538(cmd)
+
+        # Choose a good default address unless the user specified -a
+        if conf['address'] is None:
+            conf['address'] = device.flash_start_addr
 
 
         if conf['erase']:
