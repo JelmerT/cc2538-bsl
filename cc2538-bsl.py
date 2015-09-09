@@ -392,6 +392,23 @@ class CommandInterface(object):
             if self.checkLastCmd():
                 return self._decode_addr(crc[3],crc[2],crc[1],crc[0])
 
+    def cmdCRC32CC26xx(self, addr, size):
+        cmd = 0x27
+        lng = 15
+
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd, addr, size)) # send checksum
+        self._write(cmd) # send cmd
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(self._encode_addr(size)) # send size
+        self._write(self._encode_addr(0x00000000)) # send number of reads
+
+        mdebug(10, "*** CRC32 command(0x27)")
+        if self._wait_for_ack("Get CRC32 (0x27)", 1):
+            crc=self.receivePacket()
+            if self.checkLastCmd():
+                return self._decode_addr(crc[3], crc[2], crc[1], crc[0])
+
     def cmdDownload(self, addr, size):
         cmd=0x21
         lng=11
