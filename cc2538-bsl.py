@@ -51,7 +51,7 @@ import binascii
 import traceback
 
 #version
-VERSION_STRING = "1.1"
+VERSION_STRING = "1.2"
 
 # Verbose level
 QUIET = 5
