@@ -591,10 +591,7 @@ class CommandInterface(object):
     def writeMemory(self, addr, data):
         lng = len(data)
         trsf_size = 248 # amount of data bytes transferred per packet (theory: max 252 + 3)
-        if PY3:
-            empty_packet = b'\xff'*trsf_size # empty packet (filled with 0xFF)
-        else:
-            empty_packet = [255]*trsf_size # empty packet (filled with 0xFF)
+        empty_packet = bytearray((0xFF,) * trsf_size)
 
         # Boot loader enable check
         # TODO: implement check for all chip sizes & take into account partial firmware uploads
