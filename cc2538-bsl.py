@@ -118,20 +118,20 @@ class CommandInterface(object):
             timeout=0.5             # set a timeout value, None for waiting forever
         )
 
-    def invoke_bootloader(self):
+    def invoke_bootloader(self, dtr_active_high=False):
         # Use the DTR and RTS lines to control !RESET and the bootloader pin.
         # This can automatically invoke the bootloader without the user
         # having to toggle any pins.
         # DTR: connected to the bootloader pin
         # RTS: connected to !RESET
-        self.sp.setDTR(1)
+        self.sp.setDTR(1 if not dtr_active_high else 0)
         self.sp.setRTS(0)
         self.sp.setRTS(1)
         self.sp.setRTS(0)
         time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
                            # comes out of reset. This fixes an issue where there
                            # wasn't enough delay here on Mac.
-        self.sp.setDTR(0)
+        self.sp.setDTR(0 if not dtr_active_high else 1)
 
     def close(self):
         self.sp.close()
@@ -487,7 +487,6 @@ class CommandInterface(object):
                 if addr_set != 1:
                     self.cmdDownload(addr,lng) #set starting address if not set
                     addr_set = 1
-
                 mdebug(5, " Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': trsf_size}, '\r')
                 sys.stdout.flush()
 
@@ -563,7 +562,7 @@ def print_version():
     print('%s %s' % (sys.argv[0], version))
 
 def usage():
-    print("""Usage: %s [-DhqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [file.bin]
+    print("""Usage: %s [-DhqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [file.bin]
     -h                       This help
     -q                       Quiet
     -V                       Verbose
@@ -576,6 +575,7 @@ def usage():
     -b baud                  Baud speed (default: 500000)
     -a addr                  Target address
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
+    --bootloader-active-high Use active high signals to enter bootloader
     -D, --disable-bootloader After finishing, disable the bootloader
     --version                Print script version
 
@@ -608,13 +608,14 @@ if __name__ == "__main__":
             'len': 0x80000,
             'fname':'',
             'ieee_address': 0,
+            'bootloader_active_high': False,
             'disable-bootloader': 0
         }
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "DhqVewvrp:b:a:l:i:", ['ieee-address=', 'disable-bootloader', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "DhqVewvrp:b:a:l:i:", ['ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -648,6 +649,8 @@ if __name__ == "__main__":
             conf['len'] = eval(a)
         elif o == '-i' or o == '--ieee-address':
             conf['ieee_address'] = str(a)
+        elif o == '--bootloader-active-high':
+            conf['bootloader_active_high'] = True
         elif o == '-D' or o == '--disable-bootloader':
             conf['disable-bootloader'] = 1
         elif o == '--version':
@@ -694,7 +697,7 @@ if __name__ == "__main__":
 
         cmd = CommandInterface()
         cmd.open(conf['port'], conf['baud'])
-        cmd.invoke_bootloader()
+        cmd.invoke_bootloader(conf['bootloader_active_high'])
         mdebug(5, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],
                                                       'baud':conf['baud']})
         if conf['write'] or conf['verify']:
