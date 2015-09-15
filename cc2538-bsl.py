@@ -119,7 +119,7 @@ class CommandInterface(object):
         )
 
     def invoke_bootloader(self, dtr_active_high=False):
-        # Use the DTR and RTS lines to control !RESET and the bootloader pin.
+        # Use the DTR and RTS lines to control bootloader and the !RESET pin.
         # This can automatically invoke the bootloader without the user
         # having to toggle any pins.
         # DTR: connected to the bootloader pin
