@@ -274,11 +274,11 @@ class CommandInterface(object):
             mdebug(10, "Command Successful")
             return 1
         else:
-            stat_str = RETURN_CMD_STRS.get(stat, None)
+            stat_str = RETURN_CMD_STRS.get(stat[0], None)
             if stat_str is None:
-                mdebug(0, 'Warning: unrecognized status returned 0x%x' % stat)
+                mdebug(0, 'Warning: unrecognized status returned 0x%x' % stat[0])
             else:
-                mdebug(0, "Target returned: 0x%x, %s" % (stat, stat_str))
+                mdebug(0, "Target returned: 0x%x, %s" % (stat[0], stat_str))
             return 0
 
 
