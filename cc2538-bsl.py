@@ -537,7 +537,7 @@ def print_version():
     print('%s %s' % (sys.argv[0], version))
 
 def usage():
-    print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader_active_high] [file.bin]
+    print("""Usage: %s [-hqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [file.bin]
     -h                       This help
     -q                       Quiet
     -V                       Verbose
@@ -550,7 +550,7 @@ def usage():
     -b baud                  Baud speed (default: 500000)
     -a addr                  Target address
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
-    --bootloader_active_high Use active high signals to enter bootloader
+    --bootloader-active-high Use active high signals to enter bootloader
     --version                Print script version
 
 Examples:
@@ -588,7 +588,7 @@ if __name__ == "__main__":
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=','bootloader_active_high', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "hqVewvrp:b:a:l:i:", ['ieee-address=','bootloader-active-high', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -622,7 +622,7 @@ if __name__ == "__main__":
             conf['len'] = eval(a)
         elif o == '-i' or o == '--ieee-address':
             conf['ieee_address'] = str(a)
-        elif o == '--bootloader_active_high':
+        elif o == '--bootloader-active-high':
             conf['bootloader_active_high'] = True
         elif o == '--version':
             print_version()
