@@ -894,15 +894,6 @@ Examples:
 
     """ % (sys.argv[0],sys.argv[0],sys.argv[0]))
 
-def read(filename):
-    """Read the file to be programmed and turn it into a binary"""
-    with open(filename, 'rb') as f:
-        bytes = f.read()
-        if PY3:
-            return bytes
-        else:
-            return [ord(x) for x in bytes]
-
 if __name__ == "__main__":
 
     conf = {
@@ -1018,7 +1009,7 @@ if __name__ == "__main__":
                                                       'baud':conf['baud']})
         if conf['write'] or conf['verify']:
             mdebug(5, "Reading data from %s" % args[0])
-            data = read(args[0])
+            firmware = FirmwareFile(args[0])
 
         mdebug(5, "Connecting to target...")
 
@@ -1063,7 +1054,7 @@ if __name__ == "__main__":
 
         if conf['write']:
             # TODO: check if boot loader back-door is open, need to read flash size first to get address
-            if cmd.writeMemory(conf['address'], data):
+            if cmd.writeMemory(conf['address'], firmware.bytes):
                 mdebug(5, "    Write done                                ")
             else:
                 raise CmdException("Write failed                       ")
@@ -1071,8 +1062,8 @@ if __name__ == "__main__":
         if conf['verify']:
             mdebug(5,"Verifying by comparing CRC32 calculations.")
 
-            crc_local = (binascii.crc32(bytearray(data))& 0xffffffff)
-            crc_target = device.crc(conf['address'], len(data)) #CRC of target will change according to length input file
+            crc_local = firmware.crc32()
+            crc_target = device.crc(conf['address'], len(firmware.bytes)) #CRC of target will change according to length input file
 
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
