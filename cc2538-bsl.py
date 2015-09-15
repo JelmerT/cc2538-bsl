@@ -563,7 +563,7 @@ def print_version():
 
 def usage():
     print("""Usage: %s [-DhqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [file.bin]
-    -h                       This help
+    -h, --help               This help
     -q                       Quiet
     -V                       Verbose
     -e                       Erase (full)
@@ -615,7 +615,7 @@ if __name__ == "__main__":
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "DhqVewvrp:b:a:l:i:", ['ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "DhqVewvrp:b:a:l:i:", ['help', 'ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -627,7 +627,7 @@ if __name__ == "__main__":
             QUIET = 10
         elif o == '-q':
             QUIET = 0
-        elif o == '-h':
+        elif o == '-h' or o == '--help':
             usage()
             sys.exit(0)
         elif o == '-e':
