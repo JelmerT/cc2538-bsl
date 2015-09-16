@@ -461,6 +461,23 @@ class CommandInterface(object):
             if self.checkLastCmd():
                 return data # self._decode_addr(ord(data[3]),ord(data[2]),ord(data[1]),ord(data[0]))
 
+    def cmdMemReadCC26xx(self, addr):
+        cmd = 0x2A
+        lng = 9
+
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd, addr, 2)) # send checksum
+        self._write(cmd) # send cmd
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(1) # send width, 4 bytes
+        self._write(1) # send number of reads
+
+        mdebug(10, "*** Mem Read (0x2A)")
+        if self._wait_for_ack("Mem Read (0x2A)", 1):
+            data = self.receivePacket()
+            if self.checkLastCmd():
+                return data
+
     def cmdMemWrite(self, addr, data, width): # untested
         # TODO: check width for 1 or 4 and data size
         cmd=0x2B
