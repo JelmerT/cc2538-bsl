@@ -574,12 +574,32 @@ class CC2538(Chip):
         self.flash_start_addr = 0x00200000
         self.addr_ieee_address_secondary = 0x0027ffcc
         self.has_cmd_set_xosc = True
-        self.bootloader_address = 0x0027ffd4
         self.bootloader_dis_val = 0xefffffff
         self.crc_cmd = "cmdCRC32"
 
-        #ToDo: Flash size auto-detection
-        self.size = 0x80000
+        FLASH_CTRL_DIECFG0 = 0x400D3014
+        FLASH_CTRL_DIECFG2 = 0x400D301C
+        addr_ieee_address_primary = 0x00280028
+        ccfg_len = 44
+
+        #Read out primary IEEE address, flash and RAM size
+        model = self.command_interface.cmdMemRead(FLASH_CTRL_DIECFG0)
+        self.size = (model[3] & 0x70) * 0x2000 # in bytes
+        self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
+
+        sram = 16 + (((model[2] << 8) | model[3]) & 0x380) >> 5 # in KB
+
+        pg = self.command_interface.cmdMemRead(FLASH_CTRL_DIECFG2)
+        pg_major = (pg[2] & 0xF0) >> 4
+        pg_minor = pg[2] & 0x0F
+
+        ieee_addr = self.command_interface.cmdMemRead(addr_ieee_address_primary + 4)
+        ieee_addr += self.command_interface.cmdMemRead(addr_ieee_address_primary)
+
+        mdebug(5, "CC2538 PG%d.%d: %dKB Flash, %dKB SRAM, CCFG at 0x%08X"
+               % (pg_major, pg_minor, self.size >> 10, sram,
+                  self.bootloader_address))
+        mdebug(5, "Primary IEEE Address: %s" % (':'.join('%02X' % x for x in ieee_addr)))
 
     def erase(self):
         mdebug(5, "Erasing %s bytes starting at address 0x%08X" % (self.size, self.flash_start_addr))
