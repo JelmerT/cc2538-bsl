@@ -872,11 +872,12 @@ if __name__ == "__main__":
                 length = length + (length % 4)
 
             mdebug(5, "Reading %s bytes starting at address 0x%x" % (length, conf['address']))
-            f = file(args[0], 'w').close() #delete previous file
-            for i in range(0, length >> 2):
-                rdata = cmd.cmdMemRead(conf['address']+(i*4)) #reading 4 bytes at a time
-                mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address'] + (i * 4), rdata[3], rdata[2], rdata[1], rdata[0]), '\r')
-                file(args[0], 'ab').write(bytearray([rdata[n] for n in range(3, -1, -1)]))
+            with open(args[0], 'wb') as f:
+                for i in range(0, length >> 2):
+                    rdata = cmd.cmdMemRead(conf['address'] + (i * 4)) #reading 4 bytes at a time
+                    mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address'] + (i * 4), rdata[3], rdata[2], rdata[1], rdata[0]), '\r')
+                    f.write(bytearray([rdata[n] for n in range(3, -1, -1)]))
+                f.close()
             mdebug(5, "    Read done                                ")
 
         if conf['disable-bootloader']:
