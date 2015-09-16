@@ -901,9 +901,9 @@ if __name__ == "__main__":
             mdebug(5, "Reading %s bytes starting at address 0x%x" % (length, conf['address']))
             with open(args[0], 'wb') as f:
                 for i in range(0, length >> 2):
-                    rdata = cmd.cmdMemRead(conf['address'] + (i * 4)) #reading 4 bytes at a time
-                    mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address'] + (i * 4), rdata[3], rdata[2], rdata[1], rdata[0]), '\r')
-                    f.write(bytearray([rdata[n] for n in range(3, -1, -1)]))
+                    rdata = device.read_memory(conf['address'] + (i * 4)) #reading 4 bytes at a time
+                    mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address'] + (i * 4), rdata[0], rdata[1], rdata[2], rdata[3]), '\r')
+                    f.write(rdata)
                 f.close()
             mdebug(5, "    Read done                                ")
 
