@@ -873,7 +873,7 @@ if __name__ == "__main__":
 
             mdebug(5, "Reading %s bytes starting at address 0x%x" % (length, conf['address']))
             f = file(args[0], 'w').close() #delete previous file
-            for i in range(0,(length/4)):
+            for i in range(0, length >> 2):
                 rdata = cmd.cmdMemRead(conf['address']+(i*4)) #reading 4 bytes at a time
                 mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address']+(i*4), ord(rdata[3]), ord(rdata[2]), ord(rdata[1]), ord(rdata[0])), '\r')
                 file(args[0], 'ab').write(''.join(reversed(rdata)))
