@@ -235,7 +235,7 @@ class CommandInterface(object):
 
         size = got[0] #rcv size
         chks = got[1] #rcv checksum
-        data = self._read(size-2) # rcv data
+        data = bytearray(self._read(size - 2)) # rcv data
 
         mdebug(10, "*** received %x bytes" % size)
         if chks == sum(data)&0xFF:
