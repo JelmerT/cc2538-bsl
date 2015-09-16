@@ -585,6 +585,12 @@ class CC2538(Chip):
         mdebug(5, "Erasing %s bytes starting at address 0x%08X" % (self.size, self.flash_start_addr))
         return self.command_interface.cmdEraseMemory(self.flash_start_addr, self.size)
 
+    def read_memory(self, addr):
+        # CC2538's COMMAND_MEMORY_READ sends each 4-byte number in inverted
+        # byte order compared to what's written on the device
+        data = self.command_interface.cmdMemRead(addr)
+        return bytearray([data[x] for x in range(3, -1, -1)])
+
 class CC26xx(Chip):
     def __init__(self, command_interface):
         super(CC26xx, self).__init__(command_interface)
@@ -596,6 +602,11 @@ class CC26xx(Chip):
     def erase(self):
         mdebug(5, "Erasing all main bank flash sectors")
         return self.command_interface.cmdBankErase()
+
+    def read_memory(self, addr):
+        # CC26xx COMMAND_MEMORY_READ returns contents in the same order as
+        # they are stored on the device
+        return self.command_interface.cmdMemReadCC26xx(addr)
 
 def query_yes_no(question, default="yes"):
     valid = {"yes":True,   "y":True,  "ye":True,
