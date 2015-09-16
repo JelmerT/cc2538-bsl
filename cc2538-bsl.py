@@ -612,12 +612,106 @@ class CC2538(Chip):
         return bytearray([data[x] for x in range(3, -1, -1)])
 
 class CC26xx(Chip):
+    # Class constants
+    MISC_CONF_1 = 0x500010A0
+    PROTO_MASK_BLE = 0x01
+    PROTO_MASK_IEEE = 0x04
+    PROTO_MASK_BOTH = 0x05
+
     def __init__(self, command_interface):
         super(CC26xx, self).__init__(command_interface)
-        self.addr_ieee_address_secondary = 0x0001FFC8
-        self.bootloader_address = 0x0001FFD8
         self.bootloader_dis_val = 0x00000000
         self.crc_cmd = "cmdCRC32CC26xx"
+
+        ICEPICK_DEVICE_ID = 0x50001318
+        FCFG_USER_ID = 0x50001294
+        PRCM_RAMHWOPT = 0x40082250
+        FLASH_SIZE = 0x4003002C
+        addr_ieee_address_primary = 0x500012F0
+        ccfg_len = 88
+        ieee_address_secondary_offset = 0x20
+        bootloader_dis_offset = 0x30
+        sram = "Unknown"
+
+        # Determine CC13xx vs CC26xx via ICEPICK_DEVICE_ID::WAFER_ID and store
+        # PG revision
+        device_id = self.command_interface.cmdMemReadCC26xx(ICEPICK_DEVICE_ID)
+        wafer_id = (((device_id[3] & 0x0F) << 16) +
+                    (device_id[2] << 8) +
+                    (device_id[1] & 0xF0)) >> 4
+        pg_rev = (device_id[3] & 0xF0) >> 4
+
+        # Read FCFG1_USER_ID to get the package and supported protocols
+        user_id = self.command_interface.cmdMemReadCC26xx(FCFG_USER_ID)
+        package = {0x00: '4x4mm', 0x01: '5x5mm', 0x02: '7x7mm'}.get(user_id[2] & 0x03, "Unknown")
+        protocols = user_id[1] >> 4
+
+        # We can now detect the exact device
+        if wafer_id == 0xB99A:
+            chip = self._identify_cc26xx(pg_rev, protocols)
+        elif wafer_id == 0xB9BE:
+            chip = self._identify_cc13xx(pg_rev, protocols)
+
+        # Read flash size, calculate and store bootloader disable address
+        self.size = self.command_interface.cmdMemReadCC26xx(FLASH_SIZE)[0] * 4096
+        self.bootloader_address = self.size - ccfg_len + bootloader_dis_offset
+        self.addr_ieee_address_secondary = self.size - ccfg_len + ieee_address_secondary_offset
+
+        # RAM size
+        ramhwopt_size = self.command_interface.cmdMemReadCC26xx(PRCM_RAMHWOPT)[0] & 3
+        if ramhwopt_size == 3:
+            sram = "20KB"
+        elif ramhwopt_size == 2:
+            sram = "16KB"
+        else:
+            sram = "Unknown"
+
+        # Primary IEEE address. Stored with the MSB at the high address
+        ieee_addr = self.command_interface.cmdMemReadCC26xx(addr_ieee_address_primary + 4)[::-1]
+        ieee_addr += self.command_interface.cmdMemReadCC26xx(addr_ieee_address_primary)[::-1]
+
+        mdebug(5, "%s (%s): %dKB Flash, %s SRAM, CCFG.BL_CONFIG at 0x%08X"
+               % (chip, package, self.size >> 10, sram,
+                  self.bootloader_address))
+        mdebug(5, "Primary IEEE Address: %s" % (':'.join('%02X' % x for x in ieee_addr)))
+
+    def _identify_cc26xx(self, pg, protocols):
+        chips_dict = {
+            CC26xx.PROTO_MASK_IEEE: 'CC2630',
+            CC26xx.PROTO_MASK_BLE: 'CC2640',
+            CC26xx.PROTO_MASK_BOTH: 'CC2650',
+        }
+
+        chip_str = chips_dict.get(protocols & CC26xx.PROTO_MASK_BOTH, "Unknown")
+
+        if pg == 1:
+            pg_str = "PG1.0"
+        elif pg == 3:
+            pg_str = "PG2.0"
+        elif pg == 7:
+            pg_str = "PG2.1"
+        elif pg == 8:
+            rev_minor = self.command_interface.cmdMemReadCC26xx(CC26xx.MISC_CONF_1)[0]
+            if rev_minor == 0xFF:
+                rev_minor = 0x00
+            pg_str = "PG2.%d" % (2 + rev_minor,)
+
+        return "%s %s" % (chip_str, pg_str)
+
+    def _identify_cc13xx(self, pg, protocols):
+        chip_str = "CC1310"
+        if protocols & CC26xx.PROTO_MASK_IEEE == CC26xx.PROTO_MASK_IEEE:
+            chip_str = "CC1350"
+
+        if pg == 0:
+            pg_str = "PG1.0"
+        elif pg == 2:
+            rev_minor = self.command_interface.cmdMemReadCC26xx(CC26xx.MISC_CONF_1)[0]
+            if rev_minor == 0xFF:
+                rev_minor = 0x00
+            pg_str = "PG2.%d" % (rev_minor,)
+
+        return "%s %s" % (chip_str, pg_str)
 
     def erase(self):
         mdebug(5, "Erasing all main bank flash sectors")
