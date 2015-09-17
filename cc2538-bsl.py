@@ -470,10 +470,10 @@ class CommandInterface(object):
         # TODO: implement check for all chip sizes & take into account partial firmware uploads
         if (lng == 524288): #check if file is for 512K model
             if not ((data[524247] & (1 << 4)) >> 4): #check the boot loader enable bit  (only for 512K model)
-                if not query_yes_no("The boot loader backdoor is not enabled "\
+                if not ( conf['force'] or query_yes_no("The boot loader backdoor is not enabled "\
                     "in the firmware you are about to write to the target. "\
                     "You will NOT be able to reprogram the target using this tool if you continue! "\
-                    "Do you want to continue?","no"):
+                    "Do you want to continue?","no") ):
                     raise Exception('Aborted by user.')
 
         mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)X" %
@@ -562,10 +562,11 @@ def print_version():
     print('%s %s' % (sys.argv[0], version))
 
 def usage():
-    print("""Usage: %s [-DhqVewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [file.bin]
+    print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [file.bin]
     -h, --help               This help
     -q                       Quiet
     -V                       Verbose
+    -f                       Force operation(s) without asking any questions
     -e                       Erase (full)
     -w                       Write
     -v                       Verify (CRC32 check)
@@ -601,6 +602,7 @@ if __name__ == "__main__":
             'baud': 500000,
             'force_speed' : 0,
             'address': 0x00200000,
+            'force': 0,
             'erase': 0,
             'write': 0,
             'verify': 0,
@@ -615,7 +617,7 @@ if __name__ == "__main__":
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "DhqVewvrp:b:a:l:i:", ['help', 'ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "DhqVfewvrp:b:a:l:i:", ['help', 'ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -630,6 +632,8 @@ if __name__ == "__main__":
         elif o == '-h' or o == '--help':
             usage()
             sys.exit(0)
+        elif o == '-f':
+            conf['force'] = 1
         elif o == '-e':
             conf['erase'] = 1
         elif o == '-w':
@@ -668,12 +672,12 @@ if __name__ == "__main__":
                 raise Exception('No file path given.')
 
         if conf['write'] and conf['read']:
-            if not query_yes_no("You are reading and writing to the same file. This will overwrite your input file. "\
-            "Do you want to continue?","no"):
+            if not ( conf['force'] or query_yes_no("You are reading and writing to the same file. This will overwrite your input file. "\
+            "Do you want to continue?","no") ):
                 raise Exception('Aborted by user.')
         if conf['erase'] and conf['read'] and not conf['write']:
-            if not query_yes_no("You are about to erase your target before reading. "\
-            "Do you want to continue?","no"):
+            if not ( conf['force'] or query_yes_no("You are about to erase your target before reading. "\
+            "Do you want to continue?","no") ):
                 raise Exception('Aborted by user.')
 
         if conf['read'] and not conf['write'] and conf['verify']:
@@ -792,9 +796,9 @@ if __name__ == "__main__":
             mdebug(5, "    Read done                                ")
 
         if conf['disable-bootloader']:
-            if not query_yes_no("Disabling the bootloader will prevent you from "\
+            if not ( conf['force'] or query_yes_no("Disabling the bootloader will prevent you from "\
                                 "using this script until you re-enable the bootloader "\
-                                "using JTAG. Do you want to continue?","no"):
+                                "using JTAG. Do you want to continue?","no") ):
                 raise Exception('Aborted by user.')
             if cmd.writeMemory(FLASH_CCA_BOOTLDR_ADDRESS, FLASH_CCA_BOOTLDR_CLOSED):
                 mdebug(5, "    Set bootloader closed done                      ")
