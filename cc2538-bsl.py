@@ -205,11 +205,7 @@ class CommandInterface(object):
                 return self._write(data[written:], is_retry=True)
 
     def _read(self, length):
-        got = self.sp.read(length)
-        if PY3:
-            return got
-        else:
-            return [ord(x) for x in got]
+        return bytearray(self.sp.read(length))
 
     def sendAck(self):
         self._write(0x00)
