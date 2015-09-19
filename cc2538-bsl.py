@@ -51,7 +51,7 @@ import binascii
 import traceback
 
 #version
-VERSION_STRING = "1.1"
+VERSION_STRING = "1.2"
 
 # Verbose level
 QUIET = 5
@@ -93,14 +93,6 @@ COMMAND_RET_UNKNOWN_CMD = 0x41
 COMMAND_RET_INVALID_CMD = 0x42
 COMMAND_RET_INVALID_ADR = 0x43
 COMMAND_RET_FLASH_FAIL = 0x44
-
-ADDR_IEEE_ADDRESS_SECONDARY = 0x0027ffcc
-
-FLASH_CCA_BOOTLDR_ADDRESS = 0x0027ffd4
-if PY3:
-    FLASH_CCA_BOOTLDR_CLOSED = struct.pack('<L', 0xefffffff)
-else:
-    FLASH_CCA_BOOTLDR_CLOSED = [ord(b) for b in struct.pack('<L', 0xefffffff)]
 
 class CmdException(Exception):
     pass
@@ -319,6 +311,7 @@ class CommandInterface(object):
             version = self.receivePacket() # 4 byte answ, the 2 LSB hold chip ID
             if self.checkLastCmd():
                 assert len(version) == 4, "Unreasonable chip id: %s" % repr(version)
+                mdebug(5, "    Version 0x%02X%02X%02X%02X" % tuple(version))
                 chip_id = (version[2] << 8) | version[3]
                 return chip_id
             else:
@@ -376,6 +369,18 @@ class CommandInterface(object):
         if self._wait_for_ack("Erase memory (0x26)",10):
             return self.checkLastCmd()
 
+    def cmdBankErase(self):
+        cmd = 0x2C
+        lng = 3
+
+        self._write(lng) # send length
+        self._write(cmd) # send checksum
+        self._write(cmd) # send cmd
+
+        mdebug(10, "*** Bank Erase command(0x2C)")
+        if self._wait_for_ack("Bank Erase (0x2C)",10):
+            return self.checkLastCmd()
+
     def cmdCRC32(self, addr, size):
         cmd=0x27
         lng=11
@@ -391,6 +396,23 @@ class CommandInterface(object):
             crc=self.receivePacket()
             if self.checkLastCmd():
                 return self._decode_addr(crc[3],crc[2],crc[1],crc[0])
+
+    def cmdCRC32CC26xx(self, addr, size):
+        cmd = 0x27
+        lng = 15
+
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd, addr, size)) # send checksum
+        self._write(cmd) # send cmd
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(self._encode_addr(size)) # send size
+        self._write(self._encode_addr(0x00000000)) # send number of reads
+
+        mdebug(10, "*** CRC32 command(0x27)")
+        if self._wait_for_ack("Get CRC32 (0x27)", 1):
+            crc=self.receivePacket()
+            if self.checkLastCmd():
+                return self._decode_addr(crc[3], crc[2], crc[1], crc[0])
 
     def cmdDownload(self, addr, size):
         cmd=0x21
@@ -476,7 +498,7 @@ class CommandInterface(object):
                     "Do you want to continue?","no") ):
                     raise Exception('Aborted by user.')
 
-        mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)X" %
+        mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)08X" %
                { 'lng': lng, 'addr': addr})
 
         offs = 0
@@ -487,7 +509,7 @@ class CommandInterface(object):
                 if addr_set != 1:
                     self.cmdDownload(addr,lng) #set starting address if not set
                     addr_set = 1
-                mdebug(5, " Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': trsf_size}, '\r')
+                mdebug(5, " Write %(len)d bytes at 0x%(addr)08X" % {'addr': addr, 'len': trsf_size}, '\r')
                 sys.stdout.flush()
 
                 self.cmdSendData(data[offs:offs+trsf_size]) # send next data packet
@@ -498,9 +520,65 @@ class CommandInterface(object):
             addr = addr + trsf_size
             lng = lng - trsf_size
 
-        mdebug(5, "Write %(len)d bytes at 0x%(addr)X" % {'addr': addr, 'len': lng}, '\r')
+        mdebug(5, "Write %(len)d bytes at 0x%(addr)08X" % {'addr': addr, 'len': lng})
         self.cmdDownload(addr,lng)
         return self.cmdSendData(data[offs:offs+lng]) # send last data packet
+
+class Chip(object):
+    def __init__(self, command_interface):
+        self.command_interface = command_interface
+
+        # Some defaults. The child can override.
+        self.flash_start_addr = 0x00000000
+        self.has_cmd_set_xosc = False
+
+    def crc(self, address, size):
+        return getattr(self.command_interface, self.crc_cmd)(address, size)
+
+    def disable_bootloader(self):
+        if not (conf['force'] or query_yes_no("Disabling the bootloader will prevent you from "\
+                            "using this script until you re-enable the bootloader "\
+                            "using JTAG. Do you want to continue?", "no")):
+            raise Exception('Aborted by user.')
+
+        if PY3:
+            pattern = struct.pack('<L', self.bootloader_dis_val)
+        else:
+            pattern = [ord(b) for b in struct.pack('<L', self.bootloader_dis_val)]
+
+        if cmd.writeMemory(self.bootloader_address, pattern):
+            mdebug(5, "    Set bootloader closed done                      ")
+        else:
+            raise CmdException("Set bootloader closed failed             ")
+
+class CC2538(Chip):
+    def __init__(self, command_interface):
+        super(CC2538, self).__init__(command_interface)
+        self.flash_start_addr = 0x00200000
+        self.addr_ieee_address_secondary = 0x0027ffcc
+        self.has_cmd_set_xosc = True
+        self.bootloader_address = 0x0027ffd4
+        self.bootloader_dis_val = 0xefffffff
+        self.crc_cmd = "cmdCRC32"
+
+        #ToDo: Flash size auto-detection
+        self.size = 0x80000
+
+    def erase(self):
+        mdebug(5, "Erasing %s bytes starting at address 0x%08X" % (self.size, self.flash_start_addr))
+        return self.command_interface.cmdEraseMemory(self.flash_start_addr, self.size)
+
+class CC26xx(Chip):
+    def __init__(self, command_interface):
+        super(CC26xx, self).__init__(command_interface)
+        self.addr_ieee_address_secondary = 0x0001FFC8
+        self.bootloader_address = 0x0001FFD8
+        self.bootloader_dis_val = 0x00000000
+        self.crc_cmd = "cmdCRC32CC26xx"
+
+    def erase(self):
+        mdebug(5, "Erasing all main bank flash sectors")
+        return self.command_interface.cmdBankErase()
 
 def query_yes_no(question, default="yes"):
     valid = {"yes":True,   "y":True,  "ye":True,
@@ -601,7 +679,7 @@ if __name__ == "__main__":
             'port': 'auto',
             'baud': 500000,
             'force_speed' : 0,
-            'address': 0x00200000,
+            'address': None,
             'force': 0,
             'erase': 0,
             'write': 0,
@@ -713,18 +791,6 @@ if __name__ == "__main__":
         if not cmd.sendSynch():
             raise CmdException("Can't connect to target. Ensure boot loader is started. (no answer on synch sequence)")
 
-        if conf['force_speed'] != 1:
-            if cmd.cmdSetXOsc(): #switch to external clock source
-                cmd.close()
-                conf['baud']=1000000
-                cmd.open(conf['port'], conf['baud'])
-                mdebug(6, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],'baud':conf['baud']})
-                mdebug(6, "Reconnecting to target at higher speed...")
-                if (cmd.sendSynch()!=1):
-                    raise CmdException("Can't connect to target after clock source switch. (Check external crystal)")
-            else:
-                raise CmdException("Can't switch target to external clock source. (Try forcing speed)")
-
         # if (cmd.cmdPing() != 1):
         #     raise CmdException("Can't connect to target. Ensure boot loader is started. (no answer on ping command)")
 
@@ -732,17 +798,31 @@ if __name__ == "__main__":
         chip_id_str = CHIP_ID_STRS.get(chip_id, None)
 
         if chip_id_str is None:
-            mdebug(0, 'Warning: unrecognized chip ID 0x%x' % chip_id)
+            mdebug(0, 'Warning: unrecognized chip ID. Selecting CC13xx/CC26xx')
+            device = CC26xx(cmd)
         else:
             mdebug(5, "    Target id 0x%x, %s" % (chip_id, chip_id_str))
+            device = CC2538(cmd)
+
+        # Choose a good default address unless the user specified -a
+        if conf['address'] is None:
+            conf['address'] = device.flash_start_addr
+
+        if conf['force_speed'] != 1 and device.has_cmd_set_xosc:
+            if cmd.cmdSetXOsc(): #switch to external clock source
+                cmd.close()
+                conf['baud'] = 1000000
+                cmd.open(conf['port'], conf['baud'])
+                mdebug(6, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'], 'baud':conf['baud']})
+                mdebug(6, "Reconnecting to target at higher speed...")
+                if (cmd.sendSynch() != 1):
+                    raise CmdException("Can't connect to target after clock source switch. (Check external crystal)")
+            else:
+                raise CmdException("Can't switch target to external clock source. (Try forcing speed)")
 
         if conf['erase']:
-            # we only do full erase for now (CC2538)
-            address = 0x00200000 #flash start addr for cc2538
-            size = 0x80000 #total flash size cc2538
-            mdebug(5, "Erasing %s bytes starting at address 0x%x" % (size, address))
-
-            if cmd.cmdEraseMemory(address, size):
+            # we only do full erase for now
+            if device.erase():
                 mdebug(5, "    Erase done")
             else:
                 raise CmdException("Erase failed")
@@ -758,7 +838,7 @@ if __name__ == "__main__":
             mdebug(5,"Verifying by comparing CRC32 calculations.")
 
             crc_local = (binascii.crc32(bytearray(data))& 0xffffffff)
-            crc_target = cmd.cmdCRC32(conf['address'],len(data)) #CRC of target will change according to length input file
+            crc_target = device.crc(conf['address'], len(data)) #CRC of target will change according to length input file
 
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
@@ -775,7 +855,7 @@ if __name__ == "__main__":
                 mdebug(5, "Setting IEEE address to %s" % (':'.join(['%02x' % ord(b) for b in struct.pack('>Q', ieee_addr)])))
                 ieee_addr_bytes = [ord(b) for b in struct.pack('<Q', ieee_addr)]
 
-            if cmd.writeMemory(ADDR_IEEE_ADDRESS_SECONDARY, ieee_addr_bytes):
+            if cmd.writeMemory(device.addr_ieee_address_secondary, ieee_addr_bytes):
                 mdebug(5, "    Set address done                                ")
             else:
                 raise CmdException("Set address failed                       ")
@@ -796,14 +876,7 @@ if __name__ == "__main__":
             mdebug(5, "    Read done                                ")
 
         if conf['disable-bootloader']:
-            if not ( conf['force'] or query_yes_no("Disabling the bootloader will prevent you from "\
-                                "using this script until you re-enable the bootloader "\
-                                "using JTAG. Do you want to continue?","no") ):
-                raise Exception('Aborted by user.')
-            if cmd.writeMemory(FLASH_CCA_BOOTLDR_ADDRESS, FLASH_CCA_BOOTLDR_CLOSED):
-                mdebug(5, "    Set bootloader closed done                      ")
-            else:
-                raise CmdException("Set bootloader closed failed             ")
+            device.disable_bootloader()
 
         cmd.cmdReset()
 
