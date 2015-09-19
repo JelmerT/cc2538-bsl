@@ -1,10 +1,8 @@
 from scripttest import TestFileEnvironment
+import shutil
 
 # Init test environment
 env = TestFileEnvironment('./test-output')
-
-# Init virtual serial port
-
 
 # Tests
 
@@ -25,3 +23,8 @@ def test_sanity_checks_verify_after_read():
 # Test for version output
 def test_version():
 	res = env.run('python', './../cc2538-bsl.py', '--version')
+
+# Clean up after tests
+def teardown_module(module):
+    print ("Removing test-output folder")
+    shutil.rmtree('./test-output')
