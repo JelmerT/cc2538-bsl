@@ -14,4 +14,4 @@ install:
   - "pip install scripttest"
 
 # command to run tests
-script: nosetest -v ./tests/test_cc2538-bsl.py
+script: nosetests -v ./tests/test_cc2538-bsl.py
