@@ -761,6 +761,10 @@ if __name__ == "__main__":
         if conf['read'] and not conf['write'] and conf['verify']:
             raise Exception('Verify after read not implemented.')
 
+        if conf['len'] < 0:
+            raise Exception('Length must be positive but %d was provided'
+                            % (conf['len'],))
+
         # Try and find the port automatically
         if conf['port'] == 'auto':
             ports = []
