@@ -866,10 +866,9 @@ if __name__ == "__main__":
 
         if conf['read']:
             length = conf['len']
-            if length < 4:  # reading 4 bytes at a time
-                length = 4
-            else:
-                length = length + (length % 4)
+
+            # Round up to a 4-byte boundary
+            length = (length + 3) & ~0x03
 
             mdebug(5, "Reading %s bytes starting at address 0x%x" % (length, conf['address']))
             with open(args[0], 'wb') as f:
