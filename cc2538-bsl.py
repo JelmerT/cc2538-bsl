@@ -50,6 +50,18 @@ import struct
 import binascii
 import traceback
 
+try:
+    import magic
+    have_magic = True
+except ImportError:
+    have_magic = False
+
+try:
+    from intelhex import IntelHex
+    have_hex_support = True
+except ImportError:
+    have_hex_support = False
+
 #version
 VERSION_STRING = "1.2"
 
@@ -96,6 +108,85 @@ COMMAND_RET_FLASH_FAIL = 0x44
 
 class CmdException(Exception):
     pass
+
+class FirmwareFile(object):
+    HEX_FILE_EXTENSIONS = ('hex', 'ihx', 'ihex')
+
+    def __init__(self, path):
+        """
+        Read a firmware file and store its data ready for device programming.
+
+        This class will try to guess the file type if python-magic is available.
+
+        If python-magic indicates a plain text file, and if IntelHex is
+        available, then the file will be treated as one of Intel HEX format.
+
+        In all other cases, the file will be treated as a raw binary file.
+
+        In both cases, the file's contents are stored in bytes for subsequent
+        usage to program a device or to perform a crc check.
+
+        Parameters:
+            path -- A str with the path to the firmware file.
+
+        Attributes:
+            bytes: A bytearray with firmware contents ready to send to the device
+        """
+        self._crc32 = None
+        firmware_is_hex = False
+
+        if have_magic:
+            file_type = bytearray(magic.from_file(path, True))
+
+            #from_file() returns bytes with PY3, str with PY2. This comparison
+            #will be True in both cases"""
+            if file_type == b'text/plain':
+                firmware_is_hex = True
+                mdebug(5, "Firmware file: Intel Hex")
+            elif file_type == b'application/octet-stream':
+                mdebug(5, "Firmware file: Raw Binary")
+            else:
+                error_str = "Could not determine firmware type. Magic " \
+                            "indicates '%s'" % (file_type)
+                raise CmdException(error_str)
+        else:
+            if os.path.splitext(path)[1][1:] in self.HEX_FILE_EXTENSIONS:
+                firmware_is_hex = True
+                mdebug(5, "Your firmware looks like an Intel Hex file")
+            else:
+                mdebug(5, "Cannot auto-detect firmware filetype: Assuming .bin")
+
+            mdebug(10, "For more solid firmware type auto-detection, install "
+                       "python-magic.")
+            mdebug(10, "Please see the readme for more details.")
+
+        if firmware_is_hex:
+            if have_hex_support:
+                self.bytes = bytearray(IntelHex(path).tobinarray())
+                return
+            else:
+                error_str = "Firmware is Intel Hex, but the IntelHex library " \
+                            "could not be imported.\n" \
+                            "Install IntelHex in site-packages or program " \
+                            "your device with a raw binary (.bin) file.\n" \
+                            "Please see the readme for more details."
+                raise CmdException(error_str)
+
+        with open(path, 'rb') as f:
+            self.bytes = bytearray(f.read())
+
+    def crc32(self):
+        """
+        Return the crc32 checksum of the firmware image
+
+        Return:
+            The firmware's CRC32, ready for comparison with the CRC
+            returned by the ROM bootloader's COMMAND_CRC32
+        """
+        if self._crc32 is None:
+            self._crc32 = binascii.crc32(bytearray(self.bytes)) & 0xffffffff
+
+        return self._crc32
 
 class CommandInterface(object):
     def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000):
@@ -500,10 +591,7 @@ class CommandInterface(object):
     def writeMemory(self, addr, data):
         lng = len(data)
         trsf_size = 248 # amount of data bytes transferred per packet (theory: max 252 + 3)
-        if PY3:
-            empty_packet = b'\xff'*trsf_size # empty packet (filled with 0xFF)
-        else:
-            empty_packet = [255]*trsf_size # empty packet (filled with 0xFF)
+        empty_packet = bytearray((0xFF,) * trsf_size)
 
         # Boot loader enable check
         # TODO: implement check for all chip sizes & take into account partial firmware uploads
@@ -806,15 +894,6 @@ Examples:
 
     """ % (sys.argv[0],sys.argv[0],sys.argv[0]))
 
-def read(filename):
-    """Read the file to be programmed and turn it into a binary"""
-    with open(filename, 'rb') as f:
-        bytes = f.read()
-        if PY3:
-            return bytes
-        else:
-            return [ord(x) for x in bytes]
-
 if __name__ == "__main__":
 
     conf = {
@@ -930,7 +1009,7 @@ if __name__ == "__main__":
                                                       'baud':conf['baud']})
         if conf['write'] or conf['verify']:
             mdebug(5, "Reading data from %s" % args[0])
-            data = read(args[0])
+            firmware = FirmwareFile(args[0])
 
         mdebug(5, "Connecting to target...")
 
@@ -975,7 +1054,7 @@ if __name__ == "__main__":
 
         if conf['write']:
             # TODO: check if boot loader back-door is open, need to read flash size first to get address
-            if cmd.writeMemory(conf['address'], data):
+            if cmd.writeMemory(conf['address'], firmware.bytes):
                 mdebug(5, "    Write done                                ")
             else:
                 raise CmdException("Write failed                       ")
@@ -983,8 +1062,8 @@ if __name__ == "__main__":
         if conf['verify']:
             mdebug(5,"Verifying by comparing CRC32 calculations.")
 
-            crc_local = (binascii.crc32(bytearray(data))& 0xffffffff)
-            crc_target = device.crc(conf['address'], len(data)) #CRC of target will change according to length input file
+            crc_local = firmware.crc32()
+            crc_target = device.crc(conf['address'], len(firmware.bytes)) #CRC of target will change according to length input file
 
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)

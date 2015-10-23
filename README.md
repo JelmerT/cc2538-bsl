@@ -12,6 +12,15 @@ To communicate with the uart port of the SoC you need a usb to serial converter:
 * If you use the SmartRF06 board with an Evaluation Module (EM) mounted on it you can use the on-board ftdi chip. Make sure the "Enable UART" jumper is set on the board. You can have a look [here][contiki cc2538dk] for more info on drivers for this chip on different operating systems.
 * If you use a different platform, there are many cheap USB to UART converters available, but make sure you use one with 3.3v voltage levels.
 
+###Dependencies
+
+If you want to be able to program your device from an Intel Hex file, you will need to install the IntelHex package: https://pypi.python.org/pypi/IntelHex (e.g. by running `pip install intelhex`).
+
+The script will try to auto-detect whether your firmware is a raw binary or an Intel Hex by using python-magic:
+(https://pypi.python.org/pypi/python-magic). You can install it by running `pip install python-magic`. Please bear in mind that installation of python-magic may have additional dependencies, depending on your OS: (https://github.com/ahupp/python-magic#dependencies).
+
+If python-magic is _not_ installed, the script will try to auto-detect the firmware type by looking at the filename extension, but this is sub-optimal. If the extension is `.hex`, `.ihx` or `.ihex`, the script will assume that the firmware is an Intel Hex file. In all other cases, the firmware will be treated as raw binary.
+
 ###CC2538 Boot Loader Backdoor
 
 Once you connected the SoC you need to make sure the serial boot loader is enabled. A chip without a valid image (program), as it comes from the factory, will automatically start the boot loader. After you upload an image to the chip, the "Image Valid" bits are set to 0 to indicate that a valid image is present in flash. On the next reset the boot loader won't be started and the image is immediately executed.   
