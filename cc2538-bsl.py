@@ -235,7 +235,7 @@ class CommandInterface(object):
 
         size = got[0] #rcv size
         chks = got[1] #rcv checksum
-        data = self._read(size-2) # rcv data
+        data = bytearray(self._read(size - 2)) # rcv data
 
         mdebug(10, "*** received %x bytes" % size)
         if chks == sum(data)&0xFF:
@@ -461,6 +461,23 @@ class CommandInterface(object):
             if self.checkLastCmd():
                 return data # self._decode_addr(ord(data[3]),ord(data[2]),ord(data[1]),ord(data[0]))
 
+    def cmdMemReadCC26xx(self, addr):
+        cmd = 0x2A
+        lng = 9
+
+        self._write(lng) # send length
+        self._write(self._calc_checks(cmd, addr, 2)) # send checksum
+        self._write(cmd) # send cmd
+        self._write(self._encode_addr(addr)) # send addr
+        self._write(1) # send width, 4 bytes
+        self._write(1) # send number of reads
+
+        mdebug(10, "*** Mem Read (0x2A)")
+        if self._wait_for_ack("Mem Read (0x2A)", 1):
+            data = self.receivePacket()
+            if self.checkLastCmd():
+                return data
+
     def cmdMemWrite(self, addr, data, width): # untested
         # TODO: check width for 1 or 4 and data size
         cmd=0x2B
@@ -568,6 +585,12 @@ class CC2538(Chip):
         mdebug(5, "Erasing %s bytes starting at address 0x%08X" % (self.size, self.flash_start_addr))
         return self.command_interface.cmdEraseMemory(self.flash_start_addr, self.size)
 
+    def read_memory(self, addr):
+        # CC2538's COMMAND_MEMORY_READ sends each 4-byte number in inverted
+        # byte order compared to what's written on the device
+        data = self.command_interface.cmdMemRead(addr)
+        return bytearray([data[x] for x in range(3, -1, -1)])
+
 class CC26xx(Chip):
     def __init__(self, command_interface):
         super(CC26xx, self).__init__(command_interface)
@@ -579,6 +602,11 @@ class CC26xx(Chip):
     def erase(self):
         mdebug(5, "Erasing all main bank flash sectors")
         return self.command_interface.cmdBankErase()
+
+    def read_memory(self, addr):
+        # CC26xx COMMAND_MEMORY_READ returns contents in the same order as
+        # they are stored on the device
+        return self.command_interface.cmdMemReadCC26xx(addr)
 
 def query_yes_no(question, default="yes"):
     valid = {"yes":True,   "y":True,  "ye":True,
@@ -761,6 +789,10 @@ if __name__ == "__main__":
         if conf['read'] and not conf['write'] and conf['verify']:
             raise Exception('Verify after read not implemented.')
 
+        if conf['len'] < 0:
+            raise Exception('Length must be positive but %d was provided'
+                            % (conf['len'],))
+
         # Try and find the port automatically
         if conf['port'] == 'auto':
             ports = []
@@ -862,17 +894,17 @@ if __name__ == "__main__":
 
         if conf['read']:
             length = conf['len']
-            if length < 4:  # reading 4 bytes at a time
-                length = 4
-            else:
-                length = length + (length % 4)
+
+            # Round up to a 4-byte boundary
+            length = (length + 3) & ~0x03
 
             mdebug(5, "Reading %s bytes starting at address 0x%x" % (length, conf['address']))
-            f = file(args[0], 'w').close() #delete previous file
-            for i in range(0,(length/4)):
-                rdata = cmd.cmdMemRead(conf['address']+(i*4)) #reading 4 bytes at a time
-                mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address']+(i*4), ord(rdata[3]), ord(rdata[2]), ord(rdata[1]), ord(rdata[0])), '\r')
-                file(args[0], 'ab').write(''.join(reversed(rdata)))
+            with open(args[0], 'wb') as f:
+                for i in range(0, length >> 2):
+                    rdata = device.read_memory(conf['address'] + (i * 4)) #reading 4 bytes at a time
+                    mdebug(5, " 0x%x: 0x%02x%02x%02x%02x" % (conf['address'] + (i * 4), rdata[0], rdata[1], rdata[2], rdata[3]), '\r')
+                    f.write(rdata)
+                f.close()
             mdebug(5, "    Read done                                ")
 
         if conf['disable-bootloader']:
