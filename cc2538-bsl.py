@@ -189,6 +189,8 @@ class FirmwareFile(object):
         return self._crc32
 
 class CommandInterface(object):
+    ACK_BYTE = 0xCC
+    NACK_BYTE = 0x33
     def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000):
         self.sp = serial.Serial(
             port=aport,
@@ -220,25 +222,27 @@ class CommandInterface(object):
         self.sp.close()
 
 
-    def _wait_for_ack(self, info="", timeout=0):
+    def _wait_for_ack(self, info = "", timeout = 1):
         stop = time.time() + timeout
-        got = None
-        while not got:
-            got = self._read(2)
+        got = bytearray(2)
+        while got[-2] != 00 or got[-1] not in (CommandInterface.ACK_BYTE,
+                                               CommandInterface.NACK_BYTE):
+            got += self._read(1)
             if time.time() > stop:
-                break
+                raise CmdException("Timeout waiting for ACK/NACK after '%s'"
+                                   % (info,))
 
-        if not got:
-            mdebug(10, "No response to %s" % info)
-            return 0
+        # Our bytearray's length is: 2 initial bytes + 2 bytes for the ACK/NACK
+        # plus a possible N-4 additional (buffered) bytes
+        mdebug(10, "Got %d additional bytes before ACK/NACK" % (len(got) - 4,))
 
         # wait for ask
-        ask = got[1]
+        ask = got[-1]
 
-        if ask == 0xCC:
+        if ask == CommandInterface.ACK_BYTE:
             # ACK
             return 1
-        elif ask == 0x33:
+        elif ask == CommandInterface.NACK_BYTE:
             # NACK
             mdebug(10, "Target replied with a NACK during %s" % info)
             return 0
@@ -296,11 +300,7 @@ class CommandInterface(object):
                 return self._write(data[written:], is_retry=True)
 
     def _read(self, length):
-        got = self.sp.read(length)
-        if PY3:
-            return got
-        else:
-            return [ord(x) for x in got]
+        return bytearray(self.sp.read(length))
 
     def sendAck(self):
         self._write(0x00)
@@ -346,7 +346,7 @@ class CommandInterface(object):
         mdebug(10, "*** sending synch sequence")
         self._write(cmd) # send U
         self._write(cmd) # send U
-        return self._wait_for_ack("Synch (0x55 0x55)")
+        return self._wait_for_ack("Synch (0x55 0x55)", 2)
 
     def checkLastCmd(self):
         stat = self.cmdGetStatus()
