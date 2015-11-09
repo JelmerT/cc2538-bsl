@@ -29,7 +29,7 @@
 
 # Implementation based on stm32loader by Ivan A-R <ivan@tuxotronic.org>
 
-# Serial boot loader over UART for CC2538
+# Serial boot loader over UART for CC13xx / CC2538 / CC26xx
 # Based on the info found in TI's swru333a.pdf (spma029.pdf)
 #
 # Bootloader only starts if no valid image is found or if boot loader
@@ -63,7 +63,7 @@ except ImportError:
     have_hex_support = False
 
 #version
-VERSION_STRING = "1.2"
+VERSION_STRING = "2.0"
 
 # Verbose level
 QUIET = 5
