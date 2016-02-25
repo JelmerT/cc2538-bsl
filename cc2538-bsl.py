@@ -213,10 +213,12 @@ class CommandInterface(object):
         self.sp.setRTS(0)
         self.sp.setRTS(1)
         self.sp.setRTS(0)
-        self.sp.setDTR(0 if not dtr_active_high else 1)
         time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
                            # comes out of reset. This fixes an issue where there
                            # wasn't enough delay here on Mac.
+        self.sp.setDTR(0 if not dtr_active_high else 1)
+        time.sleep(0.002)  # Fix #1533 timeout on cc2538 without python-magic
+
 
     def close(self):
         self.sp.close()
