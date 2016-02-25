@@ -227,8 +227,6 @@ class CommandInterface(object):
                                # comes out of reset. This fixes an issue where there
                                # wasn't enough delay here on Mac.
             self.sp.setRTS(0 if not dtr_active_high else 1)
-        
-        
 
         # Some boards have a co-processor that detects this sequence here and
         # then drives the main chip's BSL enable and !RESET pins. Depending on
