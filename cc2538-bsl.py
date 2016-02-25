@@ -217,8 +217,16 @@ class CommandInterface(object):
                            # comes out of reset. This fixes an issue where there
                            # wasn't enough delay here on Mac.
         self.sp.setDTR(0 if not dtr_active_high else 1)
-        time.sleep(0.002)  # Fix #1533 timeout on cc2538 without python-magic
 
+        # Some boards have a co-processor who detects this  sequence here and
+        # then drives the main chip's BSL enable and !RESET pins. Depending on
+        # board design and co-processor behaviour, the !RESET pin may get
+        # asserted after we have finished the sequence here. In this case, we
+        # need a small delay so as to avoid trying to talk to main chip before
+        # it has actually entered its bootloader mode.
+        #
+        # See contiki-os/contiki#1533
+        time.sleep(0.002)
 
     def close(self):
         self.sp.close()
