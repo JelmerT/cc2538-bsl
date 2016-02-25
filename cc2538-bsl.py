@@ -218,7 +218,7 @@ class CommandInterface(object):
                            # wasn't enough delay here on Mac.
         self.sp.setDTR(0 if not dtr_active_high else 1)
 
-        # Some boards have a co-processor who detects this  sequence here and
+        # Some boards have a co-processor that detects this sequence here and
         # then drives the main chip's BSL enable and !RESET pins. Depending on
         # board design and co-processor behaviour, the !RESET pin may get
         # asserted after we have finished the sequence here. In this case, we
