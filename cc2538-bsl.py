@@ -207,26 +207,26 @@ class CommandInterface(object):
         # Use the DTR and RTS lines to control bootloader and the !RESET pin.
         # This can automatically invoke the bootloader without the user
         # having to toggle any pins.
+        #
+        # If inverted is False (default):
         # DTR: connected to the bootloader pin
         # RTS: connected to !RESET
-        if (not inverted):
-            self.sp.setDTR(1 if not dtr_active_high else 0)
-            self.sp.setRTS(0)
-            self.sp.setRTS(1)
-            self.sp.setRTS(0)
-            time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
-                               # comes out of reset. This fixes an issue where there
-                               # wasn't enough delay here on Mac.
-            self.sp.setDTR(0 if not dtr_active_high else 1)
+        # If inverted is True, pin connections are the other way round
+        if inverted:
+            set_bootloader_pin = self.sp.setRTS
+            set_reset_pin = self.sp.setDTR
         else:
-            self.sp.setRTS(1 if not dtr_active_high else 0)
-            self.sp.setDTR(0)
-            self.sp.setDTR(1)
-            self.sp.setDTR(0)
-            time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
-                               # comes out of reset. This fixes an issue where there
-                               # wasn't enough delay here on Mac.
-            self.sp.setRTS(0 if not dtr_active_high else 1)
+            set_bootloader_pin = self.sp.setDTR
+            set_reset_pin = self.sp.setRTS
+
+        set_bootloader_pin(1 if not dtr_active_high else 0)
+        set_reset_pin(0)
+        set_reset_pin(1)
+        set_reset_pin(0)
+        time.sleep(0.002)  # Make sure the pin is still asserted when the chip
+                           # comes out of reset. This fixes an issue where there
+                           # wasn't enough delay here on Mac.
+        set_bootloader_pin(0 if not dtr_active_high else 1)
 
         # Some boards have a co-processor that detects this sequence here and
         # then drives the main chip's BSL enable and !RESET pins. Depending on
