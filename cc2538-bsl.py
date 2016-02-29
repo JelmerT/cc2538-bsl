@@ -203,20 +203,30 @@ class CommandInterface(object):
             timeout=0.5             # set a timeout value, None for waiting forever
         )
 
-    def invoke_bootloader(self, dtr_active_high=False):
+    def invoke_bootloader(self, dtr_active_high=False, inverted=False):
         # Use the DTR and RTS lines to control bootloader and the !RESET pin.
         # This can automatically invoke the bootloader without the user
         # having to toggle any pins.
+        #
+        # If inverted is False (default):
         # DTR: connected to the bootloader pin
         # RTS: connected to !RESET
-        self.sp.setDTR(1 if not dtr_active_high else 0)
-        self.sp.setRTS(0)
-        self.sp.setRTS(1)
-        self.sp.setRTS(0)
-        time.sleep(0.002)  # Make sure the pin is still asserted when the cc2538
+        # If inverted is True, pin connections are the other way round
+        if inverted:
+            set_bootloader_pin = self.sp.setRTS
+            set_reset_pin = self.sp.setDTR
+        else:
+            set_bootloader_pin = self.sp.setDTR
+            set_reset_pin = self.sp.setRTS
+
+        set_bootloader_pin(1 if not dtr_active_high else 0)
+        set_reset_pin(0)
+        set_reset_pin(1)
+        set_reset_pin(0)
+        time.sleep(0.002)  # Make sure the pin is still asserted when the chip
                            # comes out of reset. This fixes an issue where there
                            # wasn't enough delay here on Mac.
-        self.sp.setDTR(0 if not dtr_active_high else 1)
+        set_bootloader_pin(0 if not dtr_active_high else 1)
 
         # Some boards have a co-processor that detects this sequence here and
         # then drives the main chip's BSL enable and !RESET pins. Depending on
@@ -880,7 +890,7 @@ def print_version():
     print('%s %s' % (sys.argv[0], version))
 
 def usage():
-    print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [file.bin]
+    print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [--bootloader-invert-lines] [file.bin]
     -h, --help               This help
     -q                       Quiet
     -V                       Verbose
@@ -895,6 +905,7 @@ def usage():
     -a addr                  Target address
     -i, --ieee-address addr  Set the secondary 64 bit IEEE address
     --bootloader-active-high Use active high signals to enter bootloader
+    --bootloader-invert-lines Inverts the use of RTS and DTR to enter bootloader
     -D, --disable-bootloader After finishing, disable the bootloader
     --version                Print script version
 
@@ -920,13 +931,14 @@ if __name__ == "__main__":
             'fname':'',
             'ieee_address': 0,
             'bootloader_active_high': False,
+            'bootloader_invert_lines' : False,
             'disable-bootloader': 0
         }
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "DhqVfewvrp:b:a:l:i:", ['help', 'ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "DhqVfewvrp:b:a:l:i:", ['help', 'ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'bootloader-invert-lines', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -964,6 +976,8 @@ if __name__ == "__main__":
             conf['ieee_address'] = str(a)
         elif o == '--bootloader-active-high':
             conf['bootloader_active_high'] = True
+        elif o == '--bootloader-invert-lines':
+            conf['bootloader_invert_lines'] = True
         elif o == '-D' or o == '--disable-bootloader':
             conf['disable-bootloader'] = 1
         elif o == '--version':
@@ -1014,7 +1028,7 @@ if __name__ == "__main__":
 
         cmd = CommandInterface()
         cmd.open(conf['port'], conf['baud'])
-        cmd.invoke_bootloader(conf['bootloader_active_high'])
+        cmd.invoke_bootloader(conf['bootloader_active_high'], conf['bootloader_invert_lines'])
         mdebug(5, "Opening port %(port)s, baud %(baud)d" % {'port':conf['port'],
                                                       'baud':conf['baud']})
         if conf['write'] or conf['verify']:
