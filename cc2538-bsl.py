@@ -236,7 +236,7 @@ class CommandInterface(object):
         # it has actually entered its bootloader mode.
         #
         # See contiki-os/contiki#1533
-        time.sleep(0.002)
+        time.sleep(0.1)
 
     def close(self):
         self.sp.close()
