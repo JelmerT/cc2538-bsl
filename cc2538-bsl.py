@@ -692,7 +692,11 @@ class CC2538(Chip):
 
         #Read out primary IEEE address, flash and RAM size
         model = self.command_interface.cmdMemRead(FLASH_CTRL_DIECFG0)
-        self.size = (model[3] & 0x70) * 0x2000 # in bytes
+        self.size = (model[3] & 0x70) >> 4
+        if 0 < self.size <= 4:
+            self.size *= 0x20000 # in bytes
+        else:
+            self.size = 0x10000 # in bytes
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
 
         sram = 16 + ((((model[2] << 8) | model[3]) & 0x380) >> 5) # in KB
