@@ -699,7 +699,8 @@ class CC2538(Chip):
             self.size = 0x10000 # in bytes
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
 
-        sram = 16 + ((((model[2] << 8) | model[3]) & 0x380) >> 5) # in KB
+        sram = (((model[2] << 8) | model[3]) & 0x380) >> 7
+        sram = (2 - sram) << 3 if sram <= 1 else 32 # in KB
 
         pg = self.command_interface.cmdMemRead(FLASH_CTRL_DIECFG2)
         pg_major = (pg[2] & 0xF0) >> 4
