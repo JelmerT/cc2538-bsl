@@ -699,6 +699,8 @@ class CC2538(Chip):
 
         pg = self.command_interface.cmdMemRead(FLASH_CTRL_DIECFG2)
         pg_major = (pg[2] & 0xF0) >> 4
+        if pg_major == 0:
+            pg_major = 1
         pg_minor = pg[2] & 0x0F
 
         ieee_addr = self.command_interface.cmdMemRead(addr_ieee_address_primary + 4)
