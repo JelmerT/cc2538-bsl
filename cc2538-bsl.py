@@ -708,8 +708,13 @@ class CC2538(Chip):
             pg_major = 1
         pg_minor = pg[2] & 0x0F
 
-        ieee_addr = self.command_interface.cmdMemRead(addr_ieee_address_primary + 4)
-        ieee_addr += self.command_interface.cmdMemRead(addr_ieee_address_primary)
+        ti_oui = bytearray([0x00, 0x12, 0x4B])
+        ieee_addr = self.command_interface.cmdMemRead(addr_ieee_address_primary)
+        ieee_addr_end = self.command_interface.cmdMemRead(addr_ieee_address_primary + 4)
+        if ieee_addr[:3] == ti_oui:
+            ieee_addr += ieee_addr_end
+        else:
+            ieee_addr = ieee_addr_end + ieee_addr
 
         mdebug(5, "CC2538 PG%d.%d: %dKB Flash, %dKB SRAM, CCFG at 0x%08X"
                % (pg_major, pg_minor, self.size >> 10, sram,
