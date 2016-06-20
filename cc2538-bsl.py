@@ -63,7 +63,7 @@ except ImportError:
     have_hex_support = False
 
 #version
-VERSION_STRING = "2.0"
+VERSION_STRING = "2.1"
 
 # Verbose level
 QUIET = 5
