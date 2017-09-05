@@ -608,7 +608,7 @@ class CommandInterface(object):
 
         mdebug(10, "*** Mem write (0x2B)")
         if self._wait_for_ack("Mem Write (0x2B)", 2):
-            return checkLastCmd()
+            return self.checkLastCmd()
 
     # Complex commands section
 
