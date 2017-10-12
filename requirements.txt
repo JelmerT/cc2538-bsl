@@ -1,0 +1,4 @@
+intelhex==2.1
+scripttest==1.3
+python_magic==0.4.13
+pyserial==3.4
