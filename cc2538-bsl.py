@@ -194,7 +194,10 @@ class CommandInterface(object):
     ACK_BYTE = 0xCC
     NACK_BYTE = 0x33
     def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000):
-        self.sp = serial.Serial(
+        try:
+            self.sp = serial.serial_for_url(aport, timeout=10)
+        except AttributeError:
+            self.sp = serial.Serial(
             port=aport,
             baudrate=abaudrate,     # baudrate
             bytesize=8,             # number of databits
