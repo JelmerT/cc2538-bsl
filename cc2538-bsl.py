@@ -52,8 +52,9 @@ import traceback
 
 try:
     import magic
+    magic.from_file
     have_magic = True
-except ImportError:
+except (ImportError, AttributeError):
     have_magic = False
 
 try:
