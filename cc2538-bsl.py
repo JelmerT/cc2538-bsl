@@ -813,7 +813,7 @@ class CC26xx(Chip):
             pg_str = "PG2.0"
         elif pg == 7:
             pg_str = "PG2.1"
-        elif pg == 8:
+        elif pg == 8 or pg == 11:
             rev_minor = self.command_interface.cmdMemReadCC26xx(CC26xx.MISC_CONF_1)[0]
             if rev_minor == 0xFF:
                 rev_minor = 0x00
