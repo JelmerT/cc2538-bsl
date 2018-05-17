@@ -51,8 +51,9 @@ import traceback
 
 try:
     import magic
+    magic.from_file
     have_magic = True
-except ImportError:
+except (ImportError, AttributeError):
     have_magic = False
 
 try:
@@ -90,7 +91,9 @@ def mdebug(level, message, attr='\n'):
         print(message, end=attr, file=sys.stderr)
 
 # Takes chip IDs (obtained via Get ID command) to human-readable names
-CHIP_ID_STRS = {0xb964: 'CC2538'}
+CHIP_ID_STRS = {0xb964: 'CC2538',
+                0xb965: 'CC2538'
+                }
 
 RETURN_CMD_STRS = {0x40: 'Success',
                    0x41: 'Unknown command',
@@ -197,7 +200,10 @@ class CommandInterface(object):
     NACK_BYTE = 0x33
 
     def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000):
-        self.sp = serial.Serial(
+        try:
+            self.sp = serial.serial_for_url(aport, timeout=10)
+        except AttributeError:
+            self.sp = serial.Serial(
             port=aport,
             baudrate=abaudrate,     # baudrate
             bytesize=8,             # number of databits
@@ -854,7 +860,7 @@ class CC26xx(Chip):
             pg_str = "PG2.0"
         elif pg == 7:
             pg_str = "PG2.1"
-        elif pg == 8:
+        elif pg == 8 or pg == 11:
             rev_minor = self.command_interface.cmdMemReadCC26xx(
                                                 CC26xx.MISC_CONF_1)[0]
             if rev_minor == 0xFF:
@@ -1090,7 +1096,8 @@ if __name__ == "__main__":
             ports = []
 
             # Get a list of all USB-like names in /dev
-            for name in ['tty.usbserial',
+            for name in ['ttyACM',
+                         'tty.usbserial',
                          'ttyUSB',
                          'tty.usbmodem',
                          'tty.SLAB_USBtoUART']:
