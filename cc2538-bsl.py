@@ -199,21 +199,31 @@ class CommandInterface(object):
     ACK_BYTE = 0xCC
     NACK_BYTE = 0x33
 
-    def open(self, aport='/dev/tty.usbserial-000013FAB', abaudrate=500000):
+    def open(self, aport=None, abaudrate=500000):
+        # Try to create the object using serial_for_url(), or fall back to the
+        # old serial.Serial() where serial_for_url() is not supported.
+        # serial_for_url() is a factory class and will return a different
+        # object based on the URL. For example serial_for_url("/dev/tty.<xyz>")
+        # will return a serialposix.Serial object.
+        # For that reason, we need to make sure the port doesn't get opened at
+        # this stage: We need to set its attributes up depending on what object
+        # we get.
         try:
-            self.sp = serial.serial_for_url(aport, timeout=10)
+            self.sp = serial.serial_for_url(aport, do_not_open=True, timeout=10)
         except AttributeError:
-            self.sp = serial.Serial(
-            port=aport,
-            baudrate=abaudrate,     # baudrate
-            bytesize=8,             # number of databits
-            parity=serial.PARITY_NONE,
-            stopbits=1,
-            xonxoff=0,              # enable software flow control
-            rtscts=0,               # disable RTS/CTS flow control
-            timeout=0.5             # set a timeout value, None for waiting
-                                    # forever
-        )
+            self.sp = serial.Serial(port=None, timeout=10)
+            self.sp.port = aport
+
+        if isinstance(self.sp, serial.serialposix.Serial):
+            self.sp.baudrate=abaudrate        # baudrate
+            self.sp.bytesize=8                # number of databits
+            self.sp.parity=serial.PARITY_NONE # parity
+            self.sp.stopbits=1                # stop bits
+            self.sp.xonxoff=0                 # s/w (XON/XOFF) flow control
+            self.sp.rtscts=0                  # h/w (RTS/CTS) flow control
+            self.sp.timeout=0.5               # set the timeout value
+
+        self.sp.open()
 
     def invoke_bootloader(self, dtr_active_high=False, inverted=False):
         # Use the DTR and RTS lines to control bootloader and the !RESET pin.
