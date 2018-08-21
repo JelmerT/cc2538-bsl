@@ -817,7 +817,12 @@ class CC26xx(Chip):
         user_id = self.command_interface.cmdMemReadCC26xx(FCFG_USER_ID)
         package = {0x00: '4x4mm',
                    0x01: '5x5mm',
-                   0x02: '7x7mm'}.get(user_id[2] & 0x03, "Unknown")
+                   0x02: '7x7mm',
+                   0x03: 'Wafer',
+                   0x04: '2.7x2.7',
+                   0x05: '7x7mm Q1',
+                   }.get(user_id[2] & 0x03, "Unknown")
+
         protocols = user_id[1] >> 4
 
         # We can now detect the exact device
