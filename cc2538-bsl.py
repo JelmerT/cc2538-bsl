@@ -817,7 +817,12 @@ class CC26xx(Chip):
         user_id = self.command_interface.cmdMemReadCC26xx(FCFG_USER_ID)
         package = {0x00: '4x4mm',
                    0x01: '5x5mm',
-                   0x02: '7x7mm'}.get(user_id[2] & 0x03, "Unknown")
+                   0x02: '7x7mm',
+                   0x03: 'Wafer',
+                   0x04: '2.7x2.7',
+                   0x05: '7x7mm Q1',
+                   }.get(user_id[2] & 0x03, "Unknown")
+
         protocols = user_id[1] >> 4
 
         # We can now detect the exact device
@@ -870,12 +875,20 @@ class CC26xx(Chip):
             pg_str = "PG2.0"
         elif pg == 7:
             pg_str = "PG2.1"
-        elif pg == 8 or pg == 11:
+        elif pg == 8 or pg == 0x0B:
+            # CC26x0 PG2.2+ or CC26x0R2
             rev_minor = self.command_interface.cmdMemReadCC26xx(
                                                 CC26xx.MISC_CONF_1)[0]
             if rev_minor == 0xFF:
                 rev_minor = 0x00
-            pg_str = "PG2.%d" % (2 + rev_minor,)
+
+            if pg == 8:
+                # CC26x0
+                pg_str = "PG2.%d" % (2 + rev_minor,)
+            elif pg == 0x0B:
+                # HW revision R2, update Chip name
+                chip_str += 'R2'
+                pg_str = "PG%d.%d" % (1 + (rev_minor // 10), rev_minor % 10)
 
         return "%s %s" % (chip_str, pg_str)
 
