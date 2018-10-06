@@ -204,7 +204,8 @@ class CommandInterface(object):
         # old serial.Serial() where serial_for_url() is not supported.
         # serial_for_url() is a factory class and will return a different
         # object based on the URL. For example serial_for_url("/dev/tty.<xyz>")
-        # will return a serialposix.Serial object.
+        # will return a serialposix.Serial object for Ubuntu or Mac OS;
+        # serial_for_url("COMx") will return a serialwin32.Serial oject for Windows OS.
         # For that reason, we need to make sure the port doesn't get opened at
         # this stage: We need to set its attributes up depending on what object
         # we get.
@@ -214,7 +215,8 @@ class CommandInterface(object):
             self.sp = serial.Serial(port=None, timeout=10)
             self.sp.port = aport
 
-        if isinstance(self.sp, serial.serialposix.Serial):
+        if ((os.name == 'nt' and isinstance(self.sp, serial.serialwin32.Serial)) or \
+           (os.name == 'posix' and isinstance(self.sp, serial.serialposix.Serial))):
             self.sp.baudrate=abaudrate        # baudrate
             self.sp.bytesize=8                # number of databits
             self.sp.parity=serial.PARITY_NONE # parity
