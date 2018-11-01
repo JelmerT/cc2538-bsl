@@ -75,14 +75,12 @@ try:
     import serial
 except ImportError:
     print('{} requires the Python serial library'.format(sys.argv[0]))
-    print('Please install it with one of the following:')
+    print('Please install it with:')
     print('')
     if PY3:
-        print('   Ubuntu:  sudo apt-get install python3-serial')
-        print('   Mac:     sudo port install py34-serial')
+        print('   pip3 install pyserial')
     else:
-        print('   Ubuntu:  sudo apt-get install python-serial')
-        print('   Mac:     sudo port install py-serial')
+        print('   pip2 install pyserial')
     sys.exit(1)
 
 
