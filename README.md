@@ -14,6 +14,8 @@ To communicate with the uart port of the SoC you need a usb to serial converter:
 
 ### Dependencies
 
+This script uses the pyserial package to communicate with the serial port and chip (https://pypi.org/project/pyserial/). You can install it by running `pip install pyserial`.
+
 If you want to be able to program your device from an Intel Hex file, you will need to install the IntelHex package: https://pypi.python.org/pypi/IntelHex (e.g. by running `pip install intelhex`).
 
 The script will try to auto-detect whether your firmware is a raw binary or an Intel Hex by using python-magic:
