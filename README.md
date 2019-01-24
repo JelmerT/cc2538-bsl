@@ -34,6 +34,9 @@ If you did lock yourself out or there is already an image flashed on your SoC, y
 
 The script has been tested with SmartRF06EB + CC2650 EM. The physical wiring on the CC2650 Sensortag does not meet the ROM bootloader's requirements in terms of serial interface configuration. For that reason, interacting with the Sensortag via this script is (and will remain) impossible.
 
+For sensortags CC1350STK:
+It is possible to solder cables to R21 and R22 for flashing using the Serial Bootloader. This [issue] has instructions about flashing the CC1350STK sensortag.
+
 For the CC13xx and CC26xx families, the ROM bootloader is configured through the `BL_CONFIG` 'register' in CCFG. `BOOTLOADER_ENABLE` should be set to `0xC5` to enable the bootloader in the first place.
 
 This is enough if the chip has not been programmed with a valid image. If a valid image is present, then the remaining fields of `BL_CONFIG` and the `ERASE_CONF` register must also be configured correctly:
@@ -79,3 +82,4 @@ Loosly based on [stm32loader] by Ivan A-R <ivan@tuxotronic.org>
 [python]: http://www.python.org/download/ "Python Download"
 [contiki cc2538dk]: https://github.com/contiki-os/contiki/tree/master/platform/cc2538dk "Contiki CC2538DK readme"
 [stm32loader]: https://github.com/jsnyder/stm32loader "stm32loader"
+[issue]: https://github.com/JelmerT/cc2538-bsl/issues/78 "issue"
