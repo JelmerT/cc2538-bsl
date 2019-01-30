@@ -63,7 +63,7 @@ except ImportError:
     have_hex_support = False
 
 # version
-VERSION_STRING = "2.1"
+__version__ = "2.1"
 
 # Verbose level
 QUIET = 5
@@ -976,10 +976,10 @@ def print_version():
                   stdout=PIPE, stderr=PIPE)
         p.stderr.close()
         line = p.stdout.readlines()[0]
-        version = line.strip()
+        version = line.decode('utf-8').strip()
     except:
         # We're not in a git repo, or git failed, use fixed version string.
-        version = VERSION_STRING
+        version = __version__
     print('%s %s' % (sys.argv[0], version))
 
 
