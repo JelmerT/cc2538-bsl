@@ -839,10 +839,13 @@ class CC26xx(Chip):
             chip = self._identify_cc26xx(pg_rev, protocols)
         elif wafer_id == 0xB9BE:
             chip = self._identify_cc13xx(pg_rev, protocols)
+        elif wafer_id == 0xBB41:
+            chip = self._identify_cc13xx(pg_rev, protocols)
+            self.page_size = 8192
 
         # Read flash size, calculate and store bootloader disable address
         self.size = self.command_interface.cmdMemReadCC26xx(
-                                                FLASH_SIZE)[0] * 4096
+                                                FLASH_SIZE)[0] * self.page_size
         self.bootloader_address = self.size - ccfg_len + bootloader_dis_offset
         self.addr_ieee_address_secondary = (self.size - ccfg_len +
                                             ieee_address_secondary_offset)
@@ -908,7 +911,7 @@ class CC26xx(Chip):
 
         if pg == 0:
             pg_str = "PG1.0"
-        elif pg == 2:
+        elif pg == 2 or pg == 3:
             rev_minor = self.command_interface.cmdMemReadCC26xx(
                                                 CC26xx.MISC_CONF_1)[0]
             if rev_minor == 0xFF:
