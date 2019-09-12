@@ -698,6 +698,14 @@ class Chip(object):
         # Some defaults. The child can override.
         self.flash_start_addr = 0x00000000
         self.has_cmd_set_xosc = False
+        self.page_size = 2048
+
+    def page_to_addr(self, pages):
+        addresses = []
+        for page in pages:
+            addresses.append(int(device.flash_start_addr) +
+                             int(page)*self.page_size)
+        return addresses
 
     def crc(self, address, size):
         return getattr(self.command_interface, self.crc_cmd)(address, size)
@@ -794,6 +802,7 @@ class CC26xx(Chip):
         super(CC26xx, self).__init__(command_interface)
         self.bootloader_dis_val = 0x00000000
         self.crc_cmd = "cmdCRC32CC26xx"
+        self.page_size = 4096
 
         ICEPICK_DEVICE_ID = 0x50001318
         FCFG_USER_ID = 0x50001294
@@ -969,6 +978,49 @@ def parse_ieee_address(inaddr):
         return addr
 
 
+def _parse_range_values(device, values):
+    if len(values) and len(values) < 3:
+        page_addr_range = []
+        try:
+            for value in values:
+                try:
+                    if int(value) % int(device.page_size) is not 0:
+                        raise ValueError("Supplied addresses are not page_size: "
+                                         "{} aligned".format(device.page_size))
+                    page_addr_range.append(int(value))
+                except ValueError:
+                    if int(value, 16) % int(device.page_size) is not 0:
+                        raise ValueError("Supplied addresses are not page_size: "
+                                         "{} aligned".format(device.page_size))
+                    page_addr_range.append(int(value, 16))
+            return page_addr_range
+        except ValueError:
+            raise ValueError("Supplied value is not a page or an address")
+    else:
+        raise ValueError("Supplied range is neither a page or address range")
+
+
+def parse_page_address_range(device, pg_range):
+    """Convert the address/page range into a start address and byte length"""
+    values = pg_range.split(',')
+    page_addr = []
+    # check if first argument is character
+    if values[0].isalpha():
+        values[0].lower()
+        if values[0] == 'p' or values[0] == 'page':
+            if values[0] == 'p':
+                values[1:] = device.page_to_addr(values[1:])
+        elif values[0] != 'a' and values[0] != 'address':
+            raise ValueError("Prefix is neither a(address) or p(page)")
+        page_addr.extend(_parse_range_values(device, values[1:]))
+    else:
+        page_addr.extend(_parse_range_values(device, values))
+    if len(page_addr) == 1:
+        return [page_addr[0], device.page_size]
+    else:
+        return [page_addr[0], (page_addr[1] - page_addr[0])]
+
+
 def print_version():
     # Get the version using "git describe".
     try:
@@ -986,23 +1038,27 @@ def print_version():
 def usage():
     print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] \
     [-i addr] [--bootloader-active-high] [--bootloader-invert-lines] [file.bin]
-    -h, --help               This help
-    -q                       Quiet
-    -V                       Verbose
-    -f                       Force operation(s) without asking any questions
-    -e                       Erase (full)
-    -w                       Write
-    -v                       Verify (CRC32 check)
-    -r                       Read
-    -l length                Length of read
-    -p port                  Serial port (default: first USB-like port in /dev)
-    -b baud                  Baud speed (default: 500000)
-    -a addr                  Target address
-    -i, --ieee-address addr  Set the secondary 64 bit IEEE address
-    --bootloader-active-high Use active high signals to enter bootloader
-    --bootloader-invert-lines Inverts the use of RTS and DTR to enter bootloader
-    -D, --disable-bootloader After finishing, disable the bootloader
-    --version                Print script version
+    -h, --help                   This help
+    -q                           Quiet
+    -V                           Verbose
+    -f                           Force operation(s) without asking any questions
+    -e                           Mass erase
+    -E, --erase-page p/a,range   Receives an address(a) range or page(p) range,
+                                 default is address(a)
+                                 eg: -E a,0x00000000,0x00001000,
+                                     -E p,1,4
+    -w                           Write
+    -v                           Verify (CRC32 check)
+    -r                           Read
+    -l length                    Length of read
+    -p port                      Serial port (default: first USB-like port in /dev)
+    -b baud                      Baud speed (default: 500000)
+    -a addr                      Target address
+    -i, --ieee-address addr      Set the secondary 64 bit IEEE address
+    --bootloader-active-high     Use active high signals to enter bootloader
+    --bootloader-invert-lines    Inverts the use of RTS and DTR to enter bootloader
+    -D, --disable-bootloader     After finishing, disable the bootloader
+    --version                    Print script version
 
 Examples:
     ./%s -e -w -v example/main.bin
@@ -1020,6 +1076,7 @@ if __name__ == "__main__":
             'force': 0,
             'erase': 0,
             'write': 0,
+            'erase_page': 0,
             'verify': 0,
             'read': 0,
             'len': 0x80000,
@@ -1034,8 +1091,8 @@ if __name__ == "__main__":
 
     try:
         opts, args = getopt.getopt(sys.argv[1:],
-                                   "DhqVfewvrp:b:a:l:i:",
-                                   ['help', 'ieee-address=',
+                                   "DhqVfeE:wvrp:b:a:l:i:",
+                                   ['help', 'ieee-address=','erase-page=',
                                     'disable-bootloader',
                                     'bootloader-active-high',
                                     'bootloader-invert-lines', 'version'])
@@ -1059,6 +1116,8 @@ if __name__ == "__main__":
             conf['erase'] = 1
         elif o == '-w':
             conf['write'] = 1
+        elif o == '-E' or o == '--erase-page':
+            conf['erase_page'] = str(a)
         elif o == '-v':
             conf['verify'] = 1
         elif o == '-r':
@@ -1101,7 +1160,7 @@ if __name__ == "__main__":
                                  "file. This will overwrite your input file. "
                                  "Do you want to continue?", "no")):
                 raise Exception('Aborted by user.')
-        if conf['erase'] and conf['read'] and not conf['write']:
+        if (conf['erase'] and conf['read']) or (conf['erase_page'] and conf['read']) and not conf['write']:
             if not (conf['force'] or
                     query_yes_no("You are about to erase your target before "
                                  "reading. Do you want to continue?", "no")):
@@ -1185,11 +1244,18 @@ if __name__ == "__main__":
                                    "source. (Try forcing speed)")
 
         if conf['erase']:
-            # we only do full erase for now
+            mdebug(5, "    Performing mass erase")
             if device.erase():
                 mdebug(5, "    Erase done")
             else:
                 raise CmdException("Erase failed")
+
+        if conf['erase_page']:
+            erase_range = parse_page_address_range(device, conf['erase_page'])
+            mdebug(5, "Erasing %d bytes at addres 0x%x"
+                   % (erase_range[1], erase_range[0]))
+            cmd.cmdEraseMemory(erase_range[0], erase_range[1])
+            mdebug(5, "    Partial erase done                  ")
 
         if conf['write']:
             # TODO: check if boot loader back-door is open, need to read
