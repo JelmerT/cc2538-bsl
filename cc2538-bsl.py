@@ -618,17 +618,25 @@ class CommandInterface(object):
             if self.checkLastCmd():
                 return data
 
-    def cmdMemWrite(self, addr, data, width):  # untested
-        # TODO: check width for 1 or 4 and data size
+    def cmdMemWrite(self, addr, data, width):
+        if width != len(data):
+            raise ValueError("width does not match len(data)")
+        if width != 1 and width != 4:
+            raise ValueError("width must be 1 or 4")
+
         cmd = 0x2B
-        lng = 10
+        lng = 8 + len(data)
+
+        content = (
+            bytearray([cmd])
+            + self._encode_addr(addr)
+            + bytearray([1 if (width == 4) else 0])
+            + bytearray(data)
+        )
 
         self._write(lng)  # send length
-        self._write(self._calc_checks(cmd, addr, 0))  # send checksum
-        self._write(cmd)  # send cmd
-        self._write(self._encode_addr(addr))  # send addr
-        self._write(bytearray(data))  # send data
-        self._write(width)  # send width, 4 bytes
+        self._write(sum(content) & 0xFF)  # send checksum
+        self._write(content)
 
         mdebug(10, "*** Mem write (0x2B)")
         if self._wait_for_ack("Mem Write (0x2B)", 2):
