@@ -132,14 +132,12 @@ class FirmwareFile(object):
         firmware_is_hex = False
 
         if have_magic:
-            file_type = bytearray(magic.from_file(path, True))
+            file_type = magic.from_file(path, mime=True)
 
-            # from_file() returns bytes with PY3, str with PY2. This comparison
-            # will be True in both cases"""
-            if file_type == b'text/plain':
+            if file_type == 'text/plain':
                 firmware_is_hex = True
                 mdebug(5, "Firmware file: Intel Hex")
-            elif file_type == b'application/octet-stream':
+            elif file_type == 'application/octet-stream':
                 mdebug(5, "Firmware file: Raw Binary")
             else:
                 error_str = "Could not determine firmware type. Magic " \
