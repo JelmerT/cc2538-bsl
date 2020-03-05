@@ -48,19 +48,6 @@ import struct
 import binascii
 import traceback
 
-try:
-    import magic
-    magic.from_file
-    have_magic = True
-except (ImportError, AttributeError):
-    have_magic = False
-
-try:
-    from intelhex import IntelHex
-    have_hex_support = True
-except ImportError:
-    have_hex_support = False
-
 # version
 __version__ = "2.1"
 
@@ -129,43 +116,46 @@ class FirmwareFile(object):
             device
         """
         self._crc32 = None
-        firmware_is_hex = False
 
-        if have_magic:
-            file_type = magic.from_file(path, mime=True)
+        try:
+            from magic import from_file
+            file_type = from_file(path, mime=True)
 
             if file_type == 'text/plain':
-                firmware_is_hex = True
                 mdebug(5, "Firmware file: Intel Hex")
+                self.__read_hex(path)
             elif file_type == 'application/octet-stream':
                 mdebug(5, "Firmware file: Raw Binary")
+                self.__read_bin(path)
             else:
                 error_str = "Could not determine firmware type. Magic " \
                             "indicates '%s'" % (file_type)
                 raise CmdException(error_str)
-        else:
+        except ImportError:
             if os.path.splitext(path)[1][1:] in self.HEX_FILE_EXTENSIONS:
-                firmware_is_hex = True
                 mdebug(5, "Your firmware looks like an Intel Hex file")
+                self.__read_hex(path)
             else:
                 mdebug(5, "Cannot auto-detect firmware filetype: Assuming .bin")
+                self.__read_bin(path)
 
             mdebug(10, "For more solid firmware type auto-detection, install "
                        "python-magic.")
             mdebug(10, "Please see the readme for more details.")
 
-        if firmware_is_hex:
-            if have_hex_support:
-                self.bytes = bytearray(IntelHex(path).tobinarray())
-                return
-            else:
-                error_str = "Firmware is Intel Hex, but the IntelHex library " \
-                            "could not be imported.\n" \
-                            "Install IntelHex in site-packages or program " \
-                            "your device with a raw binary (.bin) file.\n" \
-                            "Please see the readme for more details."
-                raise CmdException(error_str)
+    def __read_hex(self, path):
+        try:
+            from intelhex import IntelHex
+            self.bytes = bytearray(IntelHex(path).tobinarray())
+        except ImportError:
+            error_str = "Firmware is Intel Hex, but the IntelHex library " \
+                        "could not be imported.\n" \
+                        "Install IntelHex in site-packages or program " \
+                        "your device with a raw binary (.bin) file.\n" \
+                        "Please see the readme for more details."
+            raise CmdException(error_str)
 
+    def __read_bin(self, path):
         with open(path, 'rb') as f:
             self.bytes = bytearray(f.read())
 
