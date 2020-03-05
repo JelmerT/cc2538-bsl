@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Copyright (c) 2014, Jelmer Tiete <jelmer@tiete.be>.
 # All rights reserved.
@@ -37,7 +37,6 @@
 # Make sure you don't lock yourself out!! (enable backdoor in your firmware)
 # More info at https://github.com/JelmerT/cc2538-bsl
 
-from __future__ import print_function
 from subprocess import Popen, PIPE
 
 import sys
@@ -68,19 +67,13 @@ __version__ = "2.1"
 # Verbose level
 QUIET = 5
 
-# Check which version of Python is running
-PY3 = sys.version_info >= (3, 0)
-
 try:
     import serial
 except ImportError:
     print('{} requires the Python serial library'.format(sys.argv[0]))
     print('Please install it with:')
     print('')
-    if PY3:
-        print('   pip3 install pyserial')
-    else:
-        print('   pip2 install pyserial')
+    print('   pip3 install pyserial')
     sys.exit(1)
 
 
@@ -139,14 +132,12 @@ class FirmwareFile(object):
         firmware_is_hex = False
 
         if have_magic:
-            file_type = bytearray(magic.from_file(path, True))
+            file_type = magic.from_file(path, mime=True)
 
-            # from_file() returns bytes with PY3, str with PY2. This comparison
-            # will be True in both cases"""
-            if file_type == b'text/plain':
+            if file_type == 'text/plain':
                 firmware_is_hex = True
                 mdebug(5, "Firmware file: Intel Hex")
-            elif file_type == b'application/octet-stream':
+            elif file_type == 'application/octet-stream':
                 mdebug(5, "Firmware file: Raw Binary")
             else:
                 error_str = "Could not determine firmware type. Magic " \
@@ -298,10 +289,7 @@ class CommandInterface(object):
         byte2 = (addr >> 8) & 0xFF
         byte1 = (addr >> 16) & 0xFF
         byte0 = (addr >> 24) & 0xFF
-        if PY3:
-            return bytes([byte0, byte1, byte2, byte3])
-        else:
-            return (chr(byte0) + chr(byte1) + chr(byte2) + chr(byte3))
+        return bytes([byte0, byte1, byte2, byte3])
 
     def _decode_addr(self, byte0, byte1, byte2, byte3):
         return ((byte3 << 24) | (byte2 << 16) | (byte1 << 8) | (byte0 << 0))
@@ -312,25 +300,17 @@ class CommandInterface(object):
                  cmd) & 0xFF)
 
     def _write(self, data, is_retry=False):
-        if PY3:
-            if type(data) == int:
-                assert data < 256
-                goal = 1
-                written = self.sp.write(bytes([data]))
-            elif type(data) == bytes or type(data) == bytearray:
-                goal = len(data)
-                written = self.sp.write(data)
-            else:
-                raise CmdException("Internal Error. Bad data type: {}"
-                                   .format(type(data)))
+        if type(data) == int:
+            assert data < 256
+            goal = 1
+            written = self.sp.write(bytes([data]))
+        elif type(data) == bytes or type(data) == bytearray:
+            goal = len(data)
+            written = self.sp.write(data)
         else:
-            if type(data) == int:
-                assert data < 256
-                goal = 1
-                written = self.sp.write(chr(data))
-            else:
-                goal = len(data)
-                written = self.sp.write(data)
+            raise CmdException("Internal Error. Bad data type: {}"
+                               .format(type(data)))
+
         if written < goal:
             mdebug(10, "*** Only wrote {} of target {} bytes"
                    .format(written, goal))
@@ -726,11 +706,7 @@ class Chip(object):
                              "no")):
             raise Exception('Aborted by user.')
 
-        if PY3:
-            pattern = struct.pack('<L', self.bootloader_dis_val)
-        else:
-            pattern = [ord(b) for b in struct.pack('<L',
-                                                   self.bootloader_dis_val)]
+        pattern = struct.pack('<L', self.bootloader_dis_val)
 
         if cmd.writeMemory(self.bootloader_address, pattern):
             mdebug(5, "    Set bootloader closed done                      ")
@@ -955,10 +931,7 @@ def query_yes_no(question, default="yes"):
 
     while True:
         sys.stdout.write(question + prompt)
-        if PY3:
-            choice = input().lower()
-        else:
-            choice = raw_input().lower()
+        choice = input().lower()
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
@@ -1292,17 +1265,10 @@ if __name__ == "__main__":
 
         if conf['ieee_address'] != 0:
             ieee_addr = parse_ieee_address(conf['ieee_address'])
-            if PY3:
-                mdebug(5, "Setting IEEE address to %s"
+            mdebug(5, "Setting IEEE address to %s"
                        % (':'.join(['%02x' % b
                                     for b in struct.pack('>Q', ieee_addr)])))
-                ieee_addr_bytes = struct.pack('<Q', ieee_addr)
-            else:
-                mdebug(5, "Setting IEEE address to %s"
-                       % (':'.join(['%02x' % ord(b)
-                                    for b in struct.pack('>Q', ieee_addr)])))
-                ieee_addr_bytes = [ord(b)
-                                   for b in struct.pack('<Q', ieee_addr)]
+            ieee_addr_bytes = struct.pack('<Q', ieee_addr)
 
             if cmd.writeMemory(device.addr_ieee_address_secondary,
                                ieee_addr_bytes):
