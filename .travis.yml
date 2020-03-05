@@ -10,6 +10,9 @@ python:
 install:
   - "pip install pyserial"
   - "pip install scripttest"
+  - "pip install flake8"
 
 # command to run tests
-script: nosetests -v ./tests/test_cc2538-bsl.py
+script:
+  - python3 -m flake8 cc2538-bsl.py
+  - nosetests -v ./tests/test_cc2538-bsl.py

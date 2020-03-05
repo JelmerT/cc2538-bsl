@@ -48,19 +48,6 @@ import struct
 import binascii
 import traceback
 
-try:
-    import magic
-    magic.from_file
-    have_magic = True
-except (ImportError, AttributeError):
-    have_magic = False
-
-try:
-    from intelhex import IntelHex
-    have_hex_support = True
-except ImportError:
-    have_hex_support = False
-
 # version
 __version__ = "2.1"
 
@@ -80,6 +67,7 @@ except ImportError:
 def mdebug(level, message, attr='\n'):
     if QUIET >= level:
         print(message, end=attr, file=sys.stderr)
+
 
 # Takes chip IDs (obtained via Get ID command) to human-readable names
 CHIP_ID_STRS = {0xb964: 'CC2538',
@@ -111,7 +99,7 @@ class FirmwareFile(object):
         """
         Read a firmware file and store its data ready for device programming.
 
-        This class will try to guess the file type if python-magic is available.
+        This class will infer the file type using python-magic if available.
 
         If python-magic indicates a plain text file, and if IntelHex is
         available, then the file will be treated as one of Intel HEX format.
@@ -129,43 +117,46 @@ class FirmwareFile(object):
             device
         """
         self._crc32 = None
-        firmware_is_hex = False
 
-        if have_magic:
-            file_type = magic.from_file(path, mime=True)
+        try:
+            from magic import from_file
+            file_type = from_file(path, mime=True)
 
             if file_type == 'text/plain':
-                firmware_is_hex = True
                 mdebug(5, "Firmware file: Intel Hex")
+                self.__read_hex(path)
             elif file_type == 'application/octet-stream':
                 mdebug(5, "Firmware file: Raw Binary")
+                self.__read_bin(path)
             else:
                 error_str = "Could not determine firmware type. Magic " \
                             "indicates '%s'" % (file_type)
                 raise CmdException(error_str)
-        else:
+        except ImportError:
             if os.path.splitext(path)[1][1:] in self.HEX_FILE_EXTENSIONS:
-                firmware_is_hex = True
                 mdebug(5, "Your firmware looks like an Intel Hex file")
+                self.__read_hex(path)
             else:
-                mdebug(5, "Cannot auto-detect firmware filetype: Assuming .bin")
+                mdebug(5, "Cannot auto-detect firmware type: Assuming .bin")
+                self.__read_bin(path)
 
             mdebug(10, "For more solid firmware type auto-detection, install "
                        "python-magic.")
             mdebug(10, "Please see the readme for more details.")
 
-        if firmware_is_hex:
-            if have_hex_support:
-                self.bytes = bytearray(IntelHex(path).tobinarray())
-                return
-            else:
-                error_str = "Firmware is Intel Hex, but the IntelHex library " \
-                            "could not be imported.\n" \
-                            "Install IntelHex in site-packages or program " \
-                            "your device with a raw binary (.bin) file.\n" \
-                            "Please see the readme for more details."
-                raise CmdException(error_str)
+    def __read_hex(self, path):
+        try:
+            from intelhex import IntelHex
+            self.bytes = bytearray(IntelHex(path).tobinarray())
+        except ImportError:
+            error_str = "Firmware is Intel Hex, but the IntelHex library " \
+                        "could not be imported.\n" \
+                        "Install IntelHex in site-packages or program " \
+                        "your device with a raw binary (.bin) file.\n" \
+                        "Please see the readme for more details."
+            raise CmdException(error_str)
 
+    def __read_bin(self, path):
         with open(path, 'rb') as f:
             self.bytes = bytearray(f.read())
 
@@ -188,31 +179,36 @@ class CommandInterface(object):
     ACK_BYTE = 0xCC
     NACK_BYTE = 0x33
 
-    def open(self, aport=None, abaudrate=500000):
-        # Try to create the object using serial_for_url(), or fall back to the
-        # old serial.Serial() where serial_for_url() is not supported.
-        # serial_for_url() is a factory class and will return a different
-        # object based on the URL. For example serial_for_url("/dev/tty.<xyz>")
-        # will return a serialposix.Serial object for Ubuntu or Mac OS;
-        # serial_for_url("COMx") will return a serialwin32.Serial oject for Windows OS.
-        # For that reason, we need to make sure the port doesn't get opened at
-        # this stage: We need to set its attributes up depending on what object
-        # we get.
+    def open(self, port=None, abaudrate=500000):
+        """
+        Try to create the object using serial_for_url(), or fall back to the
+        old serial.Serial() where serial_for_url() is not supported.
+        serial_for_url() is a factory class and will return a different
+        object based on the URL and the operating system:
+
+        - serial_for_url("/dev/tty.<xyz>") will return a serialposix.Serial
+          object for Ubuntu or Mac OS;
+
+        - serial_for_url("COMx") will return a serialwin32.Serial
+          object for Windows OS.
+
+        For that reason, we need to make sure the port doesn't get opened at
+        this stage: We need to set its attributes up depending on what object
+        we get.
+        """
         try:
-            self.sp = serial.serial_for_url(aport, do_not_open=True, timeout=10)
+            self.sp = serial.serial_for_url(port, do_not_open=True, timeout=10)
         except AttributeError:
             self.sp = serial.Serial(port=None, timeout=10)
-            self.sp.port = aport
-
-        if ((os.name == 'nt' and isinstance(self.sp, serial.serialwin32.Serial)) or \
-           (os.name == 'posix' and isinstance(self.sp, serial.serialposix.Serial))):
-            self.sp.baudrate=abaudrate        # baudrate
-            self.sp.bytesize=8                # number of databits
-            self.sp.parity=serial.PARITY_NONE # parity
-            self.sp.stopbits=1                # stop bits
-            self.sp.xonxoff=0                 # s/w (XON/XOFF) flow control
-            self.sp.rtscts=0                  # h/w (RTS/CTS) flow control
-            self.sp.timeout=0.5               # set the timeout value
+            self.sp.port = port
+        else:
+            self.sp.baudrate = abaudrate          # baudrate
+            self.sp.bytesize = 8                  # number of databits
+            self.sp.parity = serial.PARITY_NONE   # parity
+            self.sp.stopbits = 1                  # stop bits
+            self.sp.xonxoff = 0                   # s/w (XON/XOFF) flow control
+            self.sp.rtscts = 0                    # h/w (RTS/CTS) flow control
+            self.sp.timeout = 0.5                 # set the timeout value
 
         self.sp.open()
 
@@ -622,9 +618,7 @@ class CommandInterface(object):
         if self._wait_for_ack("Mem Write (0x2B)", 2):
             return self.checkLastCmd()
 
-
-# Complex commands section
-
+    # Complex commands section
     def writeMemory(self, addr, data):
         lng = len(data)
         # amount of data bytes transferred per packet (theory: max 252 + 3)
@@ -863,7 +857,8 @@ class CC26xx(Chip):
             CC26xx.PROTO_MASK_BOTH: 'CC2650',
         }
 
-        chip_str = chips_dict.get(protocols & CC26xx.PROTO_MASK_BOTH, "Unknown")
+        chip_str = chips_dict.get(protocols & CC26xx.PROTO_MASK_BOTH,
+                                  "Unknown")
 
         if pg == 1:
             pg_str = "PG1.0"
@@ -968,13 +963,13 @@ def _parse_range_values(device, values):
         try:
             for value in values:
                 try:
-                    if int(value) % int(device.page_size) is not 0:
-                        raise ValueError("Supplied addresses are not page_size: "
+                    if int(value) % int(device.page_size) != 0:
+                        raise ValueError("Given addresses are not page_size: "
                                          "{} aligned".format(device.page_size))
                     page_addr_range.append(int(value))
                 except ValueError:
-                    if int(value, 16) % int(device.page_size) is not 0:
-                        raise ValueError("Supplied addresses are not page_size: "
+                    if int(value, 16) % int(device.page_size) != 0:
+                        raise ValueError("Given addresses are not page_size: "
                                          "{} aligned".format(device.page_size))
                     page_addr_range.append(int(value, 16))
             return page_addr_range
@@ -1013,7 +1008,7 @@ def print_version():
         p.stderr.close()
         line = p.stdout.readlines()[0]
         version = line.decode('utf-8').strip()
-    except:
+    except Exception:
         # We're not in a git repo, or git failed, use fixed version string.
         version = __version__
     print('%s %s' % (sys.argv[0], version))
@@ -1025,7 +1020,7 @@ def usage():
     -h, --help                   This help
     -q                           Quiet
     -V                           Verbose
-    -f                           Force operation(s) without asking any questions
+    -f                           Force operation(s) without asking  questions
     -e                           Mass erase
     -E, --erase-page p/a,range   Receives an address(a) range or page(p) range,
                                  default is address(a)
@@ -1035,12 +1030,12 @@ def usage():
     -v                           Verify (CRC32 check)
     -r                           Read
     -l length                    Length of read
-    -p port                      Serial port (default: first USB-like port in /dev)
+    -p port                      Serial port (default: first USB-like port)
     -b baud                      Baud speed (default: 500000)
     -a addr                      Target address
     -i, --ieee-address addr      Set the secondary 64 bit IEEE address
     --bootloader-active-high     Use active high signals to enter bootloader
-    --bootloader-invert-lines    Inverts the use of RTS and DTR to enter bootloader
+    --bootloader-invert-lines    Inverts RTS and DTR to enter bootloader
     -D, --disable-bootloader     After finishing, disable the bootloader
     --version                    Print script version
 
@@ -1050,8 +1045,8 @@ Examples:
 
     """ % (sys.argv[0], sys.argv[0], sys.argv[0]))
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     conf = {
             'port': 'auto',
             'baud': 500000,
@@ -1076,7 +1071,7 @@ if __name__ == "__main__":
     try:
         opts, args = getopt.getopt(sys.argv[1:],
                                    "DhqVfeE:wvrp:b:a:l:i:",
-                                   ['help', 'ieee-address=','erase-page=',
+                                   ['help', 'ieee-address=', 'erase-page=',
                                     'disable-bootloader',
                                     'bootloader-active-high',
                                     'bootloader-invert-lines', 'version'])
@@ -1135,7 +1130,7 @@ if __name__ == "__main__":
         if conf['write'] or conf['read'] or conf['verify']:
             try:
                 args[0]
-            except:
+            except Exception:
                 raise Exception('No file path given.')
 
         if conf['write'] and conf['read']:
@@ -1144,7 +1139,8 @@ if __name__ == "__main__":
                                  "file. This will overwrite your input file. "
                                  "Do you want to continue?", "no")):
                 raise Exception('Aborted by user.')
-        if (conf['erase'] and conf['read']) or (conf['erase_page'] and conf['read']) and not conf['write']:
+        if ((conf['erase'] and conf['read'])
+           or (conf['erase_page'] and conf['read']) and not conf['write']):
             if not (conf['force'] or
                     query_yes_no("You are about to erase your target before "
                                  "reading. Do you want to continue?", "no")):
@@ -1265,9 +1261,9 @@ if __name__ == "__main__":
 
         if conf['ieee_address'] != 0:
             ieee_addr = parse_ieee_address(conf['ieee_address'])
-            mdebug(5, "Setting IEEE address to %s"
-                       % (':'.join(['%02x' % b
-                                    for b in struct.pack('>Q', ieee_addr)])))
+            mdebug(5, "Setting IEEE address to %s" % (':'.join([
+                        '%02x' % b for b in struct.pack('>Q', ieee_addr)
+                   ])))
             ieee_addr_bytes = struct.pack('<Q', ieee_addr)
 
             if cmd.writeMemory(device.addr_ieee_address_secondary,
