@@ -968,12 +968,12 @@ def _parse_range_values(device, values):
         try:
             for value in values:
                 try:
-                    if int(value) % int(device.page_size) is not 0:
+                    if int(value) % int(device.page_size) != 0:
                         raise ValueError("Supplied addresses are not page_size: "
                                          "{} aligned".format(device.page_size))
                     page_addr_range.append(int(value))
                 except ValueError:
-                    if int(value, 16) % int(device.page_size) is not 0:
+                    if int(value, 16) % int(device.page_size) != 0:
                         raise ValueError("Supplied addresses are not page_size: "
                                          "{} aligned".format(device.page_size))
                     page_addr_range.append(int(value, 16))
