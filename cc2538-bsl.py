@@ -42,6 +42,7 @@ from subprocess import Popen, PIPE
 import sys
 import getopt
 import glob
+import math
 import time
 import os
 import struct
@@ -688,6 +689,15 @@ class Chip(object):
         self.has_cmd_set_xosc = False
         self.page_size = 2048
 
+
+    def page_align_up(self, value):
+        return int(math.ceil(value / self.page_size) * self.page_size)
+
+
+    def page_align_down(self, value):
+        return int(math.floor(value / self.page_size) * self.page_size)
+
+
     def page_to_addr(self, pages):
         addresses = []
         for page in pages:
@@ -1032,6 +1042,8 @@ def usage():
                                  eg: -E a,0x00000000,0x00001000,
                                      -E p,1,4
     -w                           Write
+    -W, --write-erase            Write and erase (Only section to write, rounds
+                                 up if not page aligned)
     -v                           Verify (CRC32 check)
     -r                           Read
     -l length                    Length of read
@@ -1060,6 +1072,7 @@ if __name__ == "__main__":
             'force': 0,
             'erase': 0,
             'write': 0,
+            'write_erase': 0,
             'erase_page': 0,
             'verify': 0,
             'read': 0,
@@ -1075,8 +1088,9 @@ if __name__ == "__main__":
 
     try:
         opts, args = getopt.getopt(sys.argv[1:],
-                                   "DhqVfeE:wvrp:b:a:l:i:",
-                                   ['help', 'ieee-address=','erase-page=',
+                                   "DhqVfeE:wWvrp:b:a:l:i:",
+                                   ['help', 'ieee-address=','write-erase=',
+                                    'erase-page=',
                                     'disable-bootloader',
                                     'bootloader-active-high',
                                     'bootloader-invert-lines', 'version'])
@@ -1100,6 +1114,8 @@ if __name__ == "__main__":
             conf['erase'] = 1
         elif o == '-w':
             conf['write'] = 1
+        elif o == '-W' or o == '--write-erase':
+            conf['write_erase'] = 1
         elif o == '-E' or o == '--erase-page':
             conf['erase_page'] = str(a)
         elif o == '-v':
@@ -1132,25 +1148,27 @@ if __name__ == "__main__":
     try:
         # Sanity checks
         # check for input/output file
-        if conf['write'] or conf['read'] or conf['verify']:
+        if conf['write'] or conf['write_erase'] or conf['read'] or conf['verify']:
             try:
                 args[0]
             except:
                 raise Exception('No file path given.')
 
-        if conf['write'] and conf['read']:
+        if (conf['write'] and conf['read']) or (conf['write_erase'] and conf['read']):
             if not (conf['force'] or
                     query_yes_no("You are reading and writing to the same "
                                  "file. This will overwrite your input file. "
                                  "Do you want to continue?", "no")):
                 raise Exception('Aborted by user.')
-        if (conf['erase'] and conf['read']) or (conf['erase_page'] and conf['read']) and not conf['write']:
+        if ((conf['erase'] and conf['read']) or (conf['erase_page'] and conf['read'])
+            and not (conf['write'] or conf['write_erase'])):
             if not (conf['force'] or
                     query_yes_no("You are about to erase your target before "
                                  "reading. Do you want to continue?", "no")):
                 raise Exception('Aborted by user.')
 
-        if conf['read'] and not conf['write'] and conf['verify']:
+        if (conf['read'] and not (conf['write']  or conf['write_erase'])
+            and conf['verify']):
             raise Exception('Verify after read not implemented.')
 
         if conf['len'] < 0:
@@ -1183,7 +1201,7 @@ if __name__ == "__main__":
                               conf['bootloader_invert_lines'])
         mdebug(5, "Opening port %(port)s, baud %(baud)d"
                % {'port': conf['port'], 'baud': conf['baud']})
-        if conf['write'] or conf['verify']:
+        if conf['write'] or conf['write_erase'] or conf['verify']:
             mdebug(5, "Reading data from %s" % args[0])
             firmware = FirmwareFile(args[0])
 
@@ -1246,6 +1264,19 @@ if __name__ == "__main__":
             #       flash size first to get address
             if cmd.writeMemory(conf['address'], firmware.bytes):
                 mdebug(5, "    Write done                                ")
+            else:
+                raise CmdException("Write failed                       ")
+
+        if conf['write_erase']:
+            # TODO: check if boot loader back-door is open, need to read
+            #       flash size first to get address
+            # Round up to ensure page alignment
+            erase_len = device.page_align_up(len(firmware.bytes))
+            erase_len = min(erase_len, device.size)
+            if cmd.cmdEraseMemory(conf['address'], erase_len):
+                mdebug(5, "    Erase before write done                 ")
+            if cmd.writeMemory(conf['address'], firmware.bytes):
+                mdebug(5, "    Write done                              ")
             else:
                 raise CmdException("Write failed                       ")
 
