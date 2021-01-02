@@ -177,7 +177,7 @@ class FirmwareFile(object):
             The firmware's CRC32, ready for comparison with the CRC
             returned by the ROM bootloader's COMMAND_CRC32
         """
-        if self._crc32 is None:
+        if self._crc32 == None:
             self._crc32 = binascii.crc32(bytearray(self.bytes)) & 0xffffffff
 
         return self._crc32
@@ -382,7 +382,7 @@ class CommandInterface(object):
             return 1
         else:
             stat_str = RETURN_CMD_STRS.get(stat[0], None)
-            if stat_str is None:
+            if stat_str == None:
                 mdebug(0, "Warning: unrecognized status returned "
                           "0x%x" % stat[0])
             else:
@@ -920,7 +920,7 @@ def query_yes_no(question, default="yes"):
              "ye": True,
              "no": False,
              "n": False}
-    if default is None:
+    if default == None:
         prompt = " [y/n] "
     elif default == "yes":
         prompt = " [Y/n] "
@@ -932,7 +932,7 @@ def query_yes_no(question, default="yes"):
     while True:
         sys.stdout.write(question + prompt)
         choice = input().lower()
-        if default is not None and choice == '':
+        if default != None and choice == '':
             return valid[default]
         elif choice in valid:
             return valid[choice]
@@ -1200,7 +1200,7 @@ if __name__ == "__main__":
         chip_id = cmd.cmdGetChipId()
         chip_id_str = CHIP_ID_STRS.get(chip_id, None)
 
-        if chip_id_str is None:
+        if chip_id_str == None:
             mdebug(10, '    Unrecognized chip ID. Trying CC13xx/CC26xx')
             device = CC26xx(cmd)
         else:
@@ -1208,7 +1208,7 @@ if __name__ == "__main__":
             device = CC2538(cmd)
 
         # Choose a good default address unless the user specified -a
-        if conf['address'] is None:
+        if conf['address'] == None:
             conf['address'] = device.flash_start_addr
 
         if conf['force_speed'] != 1 and device.has_cmd_set_xosc:
