@@ -199,9 +199,9 @@ class CommandInterface(object):
         # this stage: We need to set its attributes up depending on what object
         # we get.
         try:
-            self.sp = serial.serial_for_url(aport, do_not_open=True, timeout=10)
+            self.sp = serial.serial_for_url(aport, do_not_open=True, timeout=10, write_timeout=10)
         except AttributeError:
-            self.sp = serial.Serial(port=None, timeout=10)
+            self.sp = serial.Serial(port=None, timeout=10, write_timeout=10)
             self.sp.port = aport
 
         if ((os.name == 'nt' and isinstance(self.sp, serial.serialwin32.Serial)) or \
