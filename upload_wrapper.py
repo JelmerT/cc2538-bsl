@@ -18,6 +18,7 @@ def main(args: List[str]):
             print(f'{error}')
         else:
             success = True
+            break
 
     if success:
         logging.info(f'Successfully written firmware: {args}')
