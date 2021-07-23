@@ -47,6 +47,7 @@ import os
 import struct
 import binascii
 import traceback
+from typing import List
 
 try:
     import magic
@@ -67,6 +68,28 @@ __version__ = "2.1"
 # Verbose level
 QUIET = 5
 
+# default configuration
+conf = {
+    'port': 'auto',
+    'baud': 500000,
+    'force_speed': 0,
+    'address': None,
+    'force': 0,
+    'erase': 0,
+    'write': 0,
+    'erase_page': 0,
+    'verify': 0,
+    'read': 0,
+    'len': 0x80000,
+    'fname': '',
+    'ieee_address': 0,
+    'bootloader_active_high': False,
+    'bootloader_invert_lines': False,
+    'disable-bootloader': 0
+}
+
+device = None
+
 try:
     import serial
 except ImportError:
@@ -80,6 +103,7 @@ except ImportError:
 def mdebug(level, message, attr='\n'):
     if QUIET >= level:
         print(message, end=attr, file=sys.stderr)
+
 
 # Takes chip IDs (obtained via Get ID command) to human-readable names
 CHIP_ID_STRS = {0xb964: 'CC2538',
@@ -199,20 +223,21 @@ class CommandInterface(object):
         # this stage: We need to set its attributes up depending on what object
         # we get.
         try:
-            self.sp = serial.serial_for_url(aport, do_not_open=True, timeout=10, write_timeout=10)
+            self.sp = serial.serial_for_url(
+                aport, do_not_open=True, timeout=10, write_timeout=10)
         except AttributeError:
             self.sp = serial.Serial(port=None, timeout=10, write_timeout=10)
             self.sp.port = aport
 
-        if ((os.name == 'nt' and isinstance(self.sp, serial.serialwin32.Serial)) or \
+        if ((os.name == 'nt' and isinstance(self.sp, serial.serialwin32.Serial)) or
            (os.name == 'posix' and isinstance(self.sp, serial.serialposix.Serial))):
-            self.sp.baudrate=abaudrate        # baudrate
-            self.sp.bytesize=8                # number of databits
-            self.sp.parity=serial.PARITY_NONE # parity
-            self.sp.stopbits=1                # stop bits
-            self.sp.xonxoff=0                 # s/w (XON/XOFF) flow control
-            self.sp.rtscts=0                  # h/w (RTS/CTS) flow control
-            self.sp.timeout=0.5               # set the timeout value
+            self.sp.baudrate = abaudrate        # baudrate
+            self.sp.bytesize = 8                # number of databits
+            self.sp.parity = serial.PARITY_NONE  # parity
+            self.sp.stopbits = 1                # stop bits
+            self.sp.xonxoff = 0                 # s/w (XON/XOFF) flow control
+            self.sp.rtscts = 0                  # h/w (RTS/CTS) flow control
+            self.sp.timeout = 0.5               # set the timeout value
 
         self.sp.open()
 
@@ -625,6 +650,7 @@ class CommandInterface(object):
 
 # Complex commands section
 
+
     def writeMemory(self, addr, data):
         lng = len(data)
         # amount of data bytes transferred per packet (theory: max 252 + 3)
@@ -677,6 +703,9 @@ class CommandInterface(object):
                                                            'len': lng})
         self.cmdDownload(addr, lng)
         return self.cmdSendData(data[offs:offs+lng])  # send last data packet
+
+
+cmd = CommandInterface()
 
 
 class Chip(object):
@@ -748,9 +777,9 @@ class CC2538(Chip):
 
         ti_oui = bytearray([0x00, 0x12, 0x4B])
         ieee_addr = self.command_interface.cmdMemRead(
-                                            addr_ieee_address_primary)
+            addr_ieee_address_primary)
         ieee_addr_end = self.command_interface.cmdMemRead(
-                                            addr_ieee_address_primary + 4)
+            addr_ieee_address_primary + 4)
         if ieee_addr[:3] == ti_oui:
             ieee_addr += ieee_addr_end
         else:
@@ -829,14 +858,14 @@ class CC26xx(Chip):
 
         # Read flash size, calculate and store bootloader disable address
         self.size = self.command_interface.cmdMemReadCC26xx(
-                                                FLASH_SIZE)[0] * self.page_size
+            FLASH_SIZE)[0] * self.page_size
         self.bootloader_address = self.size - ccfg_len + bootloader_dis_offset
         self.addr_ieee_address_secondary = (self.size - ccfg_len +
                                             ieee_address_secondary_offset)
 
         # RAM size
         ramhwopt_size = self.command_interface.cmdMemReadCC26xx(
-                                                PRCM_RAMHWOPT)[0] & 3
+            PRCM_RAMHWOPT)[0] & 3
         if ramhwopt_size == 3:
             sram = "20KB"
         elif ramhwopt_size == 2:
@@ -846,9 +875,9 @@ class CC26xx(Chip):
 
         # Primary IEEE address. Stored with the MSB at the high address
         ieee_addr = self.command_interface.cmdMemReadCC26xx(
-                                        addr_ieee_address_primary + 4)[::-1]
+            addr_ieee_address_primary + 4)[::-1]
         ieee_addr += self.command_interface.cmdMemReadCC26xx(
-                                        addr_ieee_address_primary)[::-1]
+            addr_ieee_address_primary)[::-1]
 
         mdebug(5, "%s (%s): %dKB Flash, %s SRAM, CCFG.BL_CONFIG at 0x%08X"
                % (chip, package, self.size >> 10, sram,
@@ -863,7 +892,8 @@ class CC26xx(Chip):
             CC26xx.PROTO_MASK_BOTH: 'CC2650',
         }
 
-        chip_str = chips_dict.get(protocols & CC26xx.PROTO_MASK_BOTH, "Unknown")
+        chip_str = chips_dict.get(
+            protocols & CC26xx.PROTO_MASK_BOTH, "Unknown")
 
         if pg == 1:
             pg_str = "PG1.0"
@@ -874,7 +904,7 @@ class CC26xx(Chip):
         elif pg == 8 or pg == 0x0B:
             # CC26x0 PG2.2+ or CC26x0R2
             rev_minor = self.command_interface.cmdMemReadCC26xx(
-                                                CC26xx.MISC_CONF_1)[0]
+                CC26xx.MISC_CONF_1)[0]
             if rev_minor == 0xFF:
                 rev_minor = 0x00
 
@@ -897,7 +927,7 @@ class CC26xx(Chip):
             pg_str = "PG1.0"
         elif pg == 2 or pg == 3:
             rev_minor = self.command_interface.cmdMemReadCC26xx(
-                                                CC26xx.MISC_CONF_1)[0]
+                CC26xx.MISC_CONF_1)[0]
             if rev_minor == 0xFF:
                 rev_minor = 0x00
             pg_str = "PG2.%d" % (rev_minor,)
@@ -1050,33 +1080,19 @@ Examples:
 
     """ % (sys.argv[0], sys.argv[0], sys.argv[0]))
 
-if __name__ == "__main__":
 
-    conf = {
-            'port': 'auto',
-            'baud': 500000,
-            'force_speed': 0,
-            'address': None,
-            'force': 0,
-            'erase': 0,
-            'write': 0,
-            'erase_page': 0,
-            'verify': 0,
-            'read': 0,
-            'len': 0x80000,
-            'fname': '',
-            'ieee_address': 0,
-            'bootloader_active_high': False,
-            'bootloader_invert_lines': False,
-            'disable-bootloader': 0
-        }
+def flash_main(arguments: List[str]):
+    global QUIET
+    global conf
+    global cmd
+    global device
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:],
+        opts, args = getopt.getopt(arguments,
                                    "DhqVfeE:wvrp:b:a:l:i:",
-                                   ['help', 'ieee-address=','erase-page=',
+                                   ['help', 'ieee-address=', 'erase-page=',
                                     'disable-bootloader',
                                     'bootloader-active-high',
                                     'bootloader-invert-lines', 'version'])
@@ -1177,7 +1193,6 @@ if __name__ == "__main__":
             else:
                 raise Exception('No serial port found.')
 
-        cmd = CommandInterface()
         cmd.open(conf['port'], conf['baud'])
         cmd.invoke_bootloader(conf['bootloader_active_high'],
                               conf['bootloader_invert_lines'])
@@ -1266,8 +1281,8 @@ if __name__ == "__main__":
         if conf['ieee_address'] != 0:
             ieee_addr = parse_ieee_address(conf['ieee_address'])
             mdebug(5, "Setting IEEE address to %s"
-                       % (':'.join(['%02x' % b
-                                    for b in struct.pack('>Q', ieee_addr)])))
+                   % (':'.join(['%02x' % b
+                                for b in struct.pack('>Q', ieee_addr)])))
             ieee_addr_bytes = struct.pack('<Q', ieee_addr)
 
             if cmd.writeMemory(device.addr_ieee_address_secondary,
@@ -1305,3 +1320,7 @@ if __name__ == "__main__":
         if QUIET >= 10:
             traceback.print_exc()
         exit('ERROR: %s' % str(err))
+
+
+if __name__ == '__main__':
+    flash_main(sys.argv[1:])
