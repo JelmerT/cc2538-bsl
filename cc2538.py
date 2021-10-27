@@ -1127,7 +1127,7 @@ def flash_main(arguments: List[str]):
             QUIET = 0
         elif o == '-h' or o == '--help':
             usage()
-            sys.exit(0)
+            return
         elif o == '-f':
             conf['force'] = 1
         elif o == '-e':
@@ -1159,7 +1159,7 @@ def flash_main(arguments: List[str]):
             conf['disable-bootloader'] = 1
         elif o == '--version':
             print_version()
-            sys.exit(0)
+            return
         else:
             assert False, "Unhandled option"
 
