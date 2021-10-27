@@ -90,14 +90,17 @@ conf = {
 
 device = None
 
-try:
-    import serial
-except ImportError:
-    print('{} requires the Python serial library'.format(sys.argv[0]))
-    print('Please install it with:')
-    print('')
-    print('   pip3 install pyserial')
-    sys.exit(1)
+
+def try_import_serial() -> bool:
+    try:
+        import serial
+        return True
+    except ImportError:
+        print('{} requires the Python serial library'.format(sys.argv[0]))
+        print('Please install it with:')
+        print('')
+        print('   pip3 install pyserial')
+        return False
 
 
 def mdebug(level, message, attr='\n'):
@@ -1087,7 +1090,10 @@ def flash_main(arguments: List[str]):
     global cmd
     global device
 
-# http://www.python.org/doc/2.5.2/lib/module-getopt.html
+    if try_import_serial() == False:
+        return
+
+    # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
         opts, args = getopt.getopt(arguments,
