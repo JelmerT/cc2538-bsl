@@ -1337,7 +1337,8 @@ def flash_main(arguments: List[str]):
     except Exception as err:
         if QUIET >= 10:
             traceback.print_exc()
-        exit('ERROR: %s' % str(err))
+        print(f'ERROR: {str(err)}')
+        return
 
 
 if __name__ == '__main__':
