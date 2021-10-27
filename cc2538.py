@@ -47,7 +47,7 @@ import os
 import struct
 import binascii
 import traceback
-from typing import List
+from typing import List, Tuple
 
 try:
     import magic
@@ -1084,17 +1084,15 @@ Examples:
     """ % (sys.argv[0], sys.argv[0], sys.argv[0]))
 
 
-def flash_main(arguments: List[str]):
-    global QUIET
-    global conf
-    global cmd
-    global device
-
-    if try_import_serial() == False:
-        return
-
-    # http://www.python.org/doc/2.5.2/lib/module-getopt.html
-
+def try_parse_args(arguments: List[str]) -> Tuple[bool, List[Tuple[str, str]], List[str]]:
+    """
+    Try to parse the provided arguments.
+    Return a tuple containing:
+        a boolean indicating success, 
+        a list of optional args, 
+        a list or arguments. 
+    http://www.python.org/doc/2.5.2/lib/module-getopt.html
+    """
     try:
         opts, args = getopt.getopt(arguments,
                                    "DhqVfeE:wvrp:b:a:l:i:",
@@ -1102,11 +1100,25 @@ def flash_main(arguments: List[str]):
                                     'disable-bootloader',
                                     'bootloader-active-high',
                                     'bootloader-invert-lines', 'version'])
+        return True, opts, args
     except getopt.GetoptError as err:
-        # print help information and exit:
         print(str(err))  # will print something like "option -a not recognized"
         usage()
-        sys.exit(2)
+        return False, [], []
+
+
+def flash_main(arguments: List[str]):
+    global QUIET
+    global conf
+    global cmd
+    global device
+
+    if try_import_serial() != True:
+        return
+
+    args_parsed, opts, args = try_parse_args()
+    if args_parsed != True:
+        return
 
     for o, a in opts:
         if o == '-V':
