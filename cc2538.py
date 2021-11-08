@@ -49,18 +49,10 @@ import binascii
 import traceback
 from typing import List, Tuple
 
-try:
-    import magic
-    magic.from_file
-    have_magic = True
-except (ImportError, AttributeError):
-    have_magic = False
 
-try:
-    from intelhex import IntelHex
-    have_hex_support = True
-except ImportError:
-    have_hex_support = False
+import serial
+import magic
+from intelhex import IntelHex
 
 # version
 __version__ = "2.1"
@@ -89,18 +81,6 @@ conf = {
 }
 
 device = None
-
-
-def try_import_serial() -> bool:
-    try:
-        import serial
-        return True
-    except ImportError:
-        print('{} requires the Python serial library'.format(sys.argv[0]))
-        print('Please install it with:')
-        print('')
-        print('   pip3 install pyserial')
-        return False
 
 
 def mdebug(level, message, attr='\n'):
@@ -158,43 +138,23 @@ class FirmwareFile(object):
         self._crc32 = None
         firmware_is_hex = False
 
-        if have_magic:
-            file_type = magic.from_file(path, mime=True)
+        file_type = magic.from_file(path, mime=True)
 
-            if file_type == 'text/plain':
-                firmware_is_hex = True
-                mdebug(5, "Firmware file: Intel Hex")
-            elif file_type == 'application/octet-stream':
-                mdebug(5, "Firmware file: Raw Binary")
-            else:
-                error_str = "Could not determine firmware type. Magic " \
-                            "indicates '%s'" % (file_type)
-                raise CmdException(error_str)
+        if file_type == 'text/plain':
+            firmware_is_hex = True
+            mdebug(5, "Firmware file: Intel Hex")
+        elif file_type == 'application/octet-stream':
+            mdebug(5, "Firmware file: Raw Binary")
         else:
-            if os.path.splitext(path)[1][1:] in self.HEX_FILE_EXTENSIONS:
-                firmware_is_hex = True
-                mdebug(5, "Your firmware looks like an Intel Hex file")
-            else:
-                mdebug(5, "Cannot auto-detect firmware filetype: Assuming .bin")
-
-            mdebug(10, "For more solid firmware type auto-detection, install "
-                       "python-magic.")
-            mdebug(10, "Please see the readme for more details.")
+            error_str = "Could not determine firmware type. Magic " \
+                        "indicates '%s'" % (file_type)
+            raise CmdException(error_str)
 
         if firmware_is_hex:
-            if have_hex_support:
-                self.bytes = bytearray(IntelHex(path).tobinarray())
-                return
-            else:
-                error_str = "Firmware is Intel Hex, but the IntelHex library " \
-                            "could not be imported.\n" \
-                            "Install IntelHex in site-packages or program " \
-                            "your device with a raw binary (.bin) file.\n" \
-                            "Please see the readme for more details."
-                raise CmdException(error_str)
-
-        with open(path, 'rb') as f:
-            self.bytes = bytearray(f.read())
+            self.bytes = bytearray(IntelHex(path).tobinarray())
+        else:
+            with open(path, 'rb') as f:
+                self.bytes = bytearray(f.read())
 
     def crc32(self):
         """
@@ -386,7 +346,6 @@ class CommandInterface(object):
             self.sendNAck()
             # TODO: retry receiving!
             raise CmdException("Received packet checksum error")
-            return 0
 
     def sendSynch(self):
         cmd = 0x55
@@ -1052,7 +1011,7 @@ def print_version():
     print('%s %s' % (sys.argv[0], version))
 
 
-def usage():
+def print_usage():
     print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] \
     [-i addr] [--bootloader-active-high] [--bootloader-invert-lines] [file.bin]
     -h, --help                   This help
@@ -1084,11 +1043,10 @@ Examples:
     """ % (sys.argv[0], sys.argv[0], sys.argv[0]))
 
 
-def try_parse_args(arguments: List[str]) -> Tuple[bool, List[Tuple[str, str]], List[str]]:
+def parse_args(arguments: List[str]) -> Tuple[bool, List[Tuple[str, str]], List[str]]:
     """
     Try to parse the provided arguments.
     Return a tuple containing:
-        a boolean indicating success, 
         a list of optional args, 
         a list or arguments. 
     http://www.python.org/doc/2.5.2/lib/module-getopt.html
@@ -1103,22 +1061,17 @@ def try_parse_args(arguments: List[str]) -> Tuple[bool, List[Tuple[str, str]], L
         return True, opts, args
     except getopt.GetoptError as err:
         print(str(err))  # will print something like "option -a not recognized"
-        usage()
-        return False, [], []
+        print_usage()
+        raise
 
 
-def flash_main(arguments: List[str]):
+def flash_main(arguments: List[str]) -> str:
     global QUIET
     global conf
     global cmd
     global device
 
-    if try_import_serial() != True:
-        return
-
-    args_parsed, opts, args = try_parse_args()
-    if args_parsed != True:
-        return
+    opts, args = parse_args()
 
     for o, a in opts:
         if o == '-V':
@@ -1126,7 +1079,7 @@ def flash_main(arguments: List[str]):
         elif o == '-q':
             QUIET = 0
         elif o == '-h' or o == '--help':
-            usage()
+            print_usage()
             return
         elif o == '-f':
             conf['force'] = 1
@@ -1339,7 +1292,3 @@ def flash_main(arguments: List[str]):
             traceback.print_exc()
         print(f'ERROR: {str(err)}')
         return
-
-
-if __name__ == '__main__':
-    flash_main(sys.argv[1:])
