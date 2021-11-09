@@ -1043,7 +1043,7 @@ Examples:
     """ % (sys.argv[0], sys.argv[0], sys.argv[0]))
 
 
-def parse_args(arguments: List[str]) -> Tuple[bool, List[Tuple[str, str]], List[str]]:
+def parse_args(arguments: List[str]) -> Tuple[List[Tuple[str, str]], List[str]]:
     """
     Try to parse the provided arguments.
     Return a tuple containing:
@@ -1058,7 +1058,7 @@ def parse_args(arguments: List[str]) -> Tuple[bool, List[Tuple[str, str]], List[
                                     'disable-bootloader',
                                     'bootloader-active-high',
                                     'bootloader-invert-lines', 'version'])
-        return True, opts, args
+        return opts, args
     except getopt.GetoptError as err:
         print(str(err))  # will print something like "option -a not recognized"
         print_usage()
@@ -1071,7 +1071,7 @@ def flash_main(arguments: List[str]) -> str:
     global cmd
     global device
 
-    opts, args = parse_args()
+    opts, args = parse_args(arguments)
 
     for o, a in opts:
         if o == '-V':

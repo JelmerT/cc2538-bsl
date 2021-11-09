@@ -176,6 +176,8 @@ class CoprocessorUploader:
         for _ in range(MAX_RETRIES):
             try:
                 # import is wrapped in try block to catch import errors
+
+                print(upload_args)
                 from cc2538 import flash_main
                 flash_main(upload_args)
 
