@@ -1031,7 +1031,7 @@ def flash_main(arguments: List[str]) -> str:
             QUIET = 0
         elif o == '-h' or o == '--help':
             print_usage()
-            return
+            return 'No operation requested'
         elif o == '-f':
             conf['force'] = 1
         elif o == '-e':
@@ -1063,7 +1063,7 @@ def flash_main(arguments: List[str]) -> str:
             conf['disable-bootloader'] = 1
         elif o == '--version':
             print_version()
-            return
+            return 'No operation requested'
         else:
             assert False, "Unhandled option"
 
@@ -1226,8 +1226,10 @@ def flash_main(arguments: List[str]) -> str:
 
         cmd.cmdReset()
 
+        return 'Ok'
+
     except Exception as err:
         if QUIET >= 10:
             traceback.print_exc()
         print(f'ERROR: {str(err)}')
-        return
+        raise
