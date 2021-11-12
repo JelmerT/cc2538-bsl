@@ -619,21 +619,6 @@ class CommandInterface(object):
         trsf_size = 248
         empty_packet = bytearray((0xFF,) * trsf_size)
 
-        # Boot loader enable check
-        # TODO: implement check for all chip sizes & take into account partial
-        # firmware uploads
-        if (lng == 524288):  # check if file is for 512K model
-            # check the boot loader enable bit  (only for 512K model)
-            if not ((data[524247] & (1 << 4)) >> 4):
-                if not (conf['force'] or
-                        query_yes_no("The boot loader backdoor is not enabled "
-                                     "in the firmware you are about to write "
-                                     "to the target. You will NOT be able to "
-                                     "reprogram the target using this tool if "
-                                     "you continue! "
-                                     "Do you want to continue?", "no")):
-                    raise Exception('Aborted by user.')
-
         mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)08X" %
                {'lng': lng, 'addr': addr})
 
@@ -690,13 +675,6 @@ class Chip(object):
         return getattr(self.command_interface, self.crc_cmd)(address, size)
 
     def disable_bootloader(self):
-        if not (conf['force'] or
-                query_yes_no("Disabling the bootloader will prevent you from "
-                             "using this script until you re-enable the "
-                             "bootloader using JTAG. Do you want to continue?",
-                             "no")):
-            raise Exception('Aborted by user.')
-
         pattern = struct.pack('<L', self.bootloader_dis_val)
 
         if cmd.writeMemory(self.bootloader_address, pattern):
@@ -906,33 +884,6 @@ class CC26xx(Chip):
         return self.command_interface.cmdMemReadCC26xx(addr)
 
 
-def query_yes_no(question, default="yes"):
-    valid = {"yes": True,
-             "y": True,
-             "ye": True,
-             "no": False,
-             "n": False}
-    if default == None:
-        prompt = " [y/n] "
-    elif default == "yes":
-        prompt = " [Y/n] "
-    elif default == "no":
-        prompt = " [y/N] "
-    else:
-        raise ValueError("invalid default answer: '%s'" % default)
-
-    while True:
-        sys.stdout.write(question + prompt)
-        choice = input().lower()
-        if default != None and choice == '':
-            return valid[default]
-        elif choice in valid:
-            return valid[choice]
-        else:
-            sys.stdout.write("Please respond with 'yes' or 'no' "
-                             "(or 'y' or 'n').\n")
-
-
 # Convert the entered IEEE address into an integer
 def parse_ieee_address(inaddr):
     try:
@@ -1124,18 +1075,6 @@ def flash_main(arguments: List[str]) -> str:
                 args[0]
             except:
                 raise Exception('No file path given.')
-
-        if conf['write'] and conf['read']:
-            if not (conf['force'] or
-                    query_yes_no("You are reading and writing to the same "
-                                 "file. This will overwrite your input file. "
-                                 "Do you want to continue?", "no")):
-                raise Exception('Aborted by user.')
-        if (conf['erase'] and conf['read']) or (conf['erase_page'] and conf['read']) and not conf['write']:
-            if not (conf['force'] or
-                    query_yes_no("You are about to erase your target before "
-                                 "reading. Do you want to continue?", "no")):
-                raise Exception('Aborted by user.')
 
         if conf['read'] and not conf['write'] and conf['verify']:
             raise Exception('Verify after read not implemented.')
