@@ -216,7 +216,7 @@ class CommandInterface(object):
 
         self.sp.open()
 
-    def invoke_bootloader(self, dtr_active_high=False, inverted=False):
+    def invoke_bootloader(self, dtr_active_high=False, inverted=False, sonoff_usb=False):
         # Use the DTR and RTS lines to control bootloader and the !RESET pin.
         # This can automatically invoke the bootloader without the user
         # having to toggle any pins.
@@ -232,15 +232,32 @@ class CommandInterface(object):
             set_bootloader_pin = self.sp.setDTR
             set_reset_pin = self.sp.setRTS
 
-        set_bootloader_pin(1 if not dtr_active_high else 0)
-        set_reset_pin(0)
-        set_reset_pin(1)
-        set_reset_pin(0)
-        # Make sure the pin is still asserted when the chip
-        # comes out of reset. This fixes an issue where
-        # there wasn't enough delay here on Mac.
-        time.sleep(0.002)
-        set_bootloader_pin(0 if not dtr_active_high else 1)
+        if sonoff_usb:
+            mdebug(5,'sonoff')
+            # this bootloader toggle is added specifically for the
+            # ITead Sonoff Zigbee 3.0 USB Dongle. This dongle has an odd
+            # connection between RTS DTR and reset and IO15 (imply gate):
+            # DTR  RTS  |  RST  IO15
+            # 1     1   |   1    1
+            # 0     0   |   1    1
+            # 1     0   |   0    1
+            # 0     1   |   1    0
+            set_bootloader_pin(0)
+            set_reset_pin(1)
+
+            set_bootloader_pin(1)
+            set_reset_pin(0)
+        else:
+            set_bootloader_pin(1 if not dtr_active_high else 0)
+            set_reset_pin(0)
+            set_reset_pin(1)
+
+            set_reset_pin(0)
+            # Make sure the pin is still asserted when the chip
+            # comes out of reset. This fixes an issue where
+            # there wasn't enough delay here on Mac.
+            time.sleep(0.002)
+            set_bootloader_pin(0 if not dtr_active_high else 1)
 
         # Some boards have a co-processor that detects this sequence here and
         # then drives the main chip's BSL enable and !RESET pins. Depending on
@@ -1021,7 +1038,7 @@ def print_version():
 
 def usage():
     print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] \
-    [-i addr] [--bootloader-active-high] [--bootloader-invert-lines] [file.bin]
+    [-i addr] [--bootloader-active-high] [--bootloader-invert-lines] [--bootloader-sonoff-usb] [file.bin]
     -h, --help                   This help
     -q                           Quiet
     -V                           Verbose
@@ -1041,6 +1058,7 @@ def usage():
     -i, --ieee-address addr      Set the secondary 64 bit IEEE address
     --bootloader-active-high     Use active high signals to enter bootloader
     --bootloader-invert-lines    Inverts the use of RTS and DTR to enter bootloader
+    --bootloader-sonoff-usb      Toggles RTS and DTR in the correct pattern for Sonoff USB dongle
     -D, --disable-bootloader     After finishing, disable the bootloader
     --version                    Print script version
 
@@ -1068,6 +1086,7 @@ if __name__ == "__main__":
             'ieee_address': 0,
             'bootloader_active_high': False,
             'bootloader_invert_lines': False,
+            'bootloader_sonoff_usb':False,
             'disable-bootloader': 0
         }
 
@@ -1079,7 +1098,8 @@ if __name__ == "__main__":
                                    ['help', 'ieee-address=','erase-page=',
                                     'disable-bootloader',
                                     'bootloader-active-high',
-                                    'bootloader-invert-lines', 'version'])
+                                    'bootloader-invert-lines',
+                                    'bootloader-sonoff-usb', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err))  # will print something like "option -a not recognized"
@@ -1121,6 +1141,8 @@ if __name__ == "__main__":
             conf['bootloader_active_high'] = True
         elif o == '--bootloader-invert-lines':
             conf['bootloader_invert_lines'] = True
+        elif o == '--bootloader-sonoff-usb':
+            conf['bootloader_sonoff_usb'] = True
         elif o == '-D' or o == '--disable-bootloader':
             conf['disable-bootloader'] = 1
         elif o == '--version':
@@ -1180,7 +1202,8 @@ if __name__ == "__main__":
         cmd = CommandInterface()
         cmd.open(conf['port'], conf['baud'])
         cmd.invoke_bootloader(conf['bootloader_active_high'],
-                              conf['bootloader_invert_lines'])
+                              conf['bootloader_invert_lines'],
+                              conf['bootloader_sonoff_usb'])
         mdebug(5, "Opening port %(port)s, baud %(baud)d"
                % {'port': conf['port'], 'baud': conf['baud']})
         if conf['write'] or conf['verify']:
