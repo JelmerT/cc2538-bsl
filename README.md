@@ -37,7 +37,10 @@ The script has been tested with SmartRF06EB + CC2650 EM. The physical wiring on 
 For sensortags CC1350STK:
 It is possible to solder cables to R21 and R22 for flashing using the Serial Bootloader. This [issue] has instructions about flashing the CC1350STK sensortag.
 
-For the CC13xx and CC26xx families, the ROM bootloader is configured through the `BL_CONFIG` 'register' in CCFG. `BOOTLOADER_ENABLE` should be set to `0xC5` to enable the bootloader in the first place.
+For ITead SONOFF Zigbee 3.0 USB Dongle Plus:
+For the CC2652P based "SONOFF Zigbee 3.0 USB Dongle Plus" (model "ZBDongle-P") adapter from ITead you need to invoke toggle to activate bootloader with `--bootloader-sonoff-usb` if you do not want to open its enclosure to manually start the bootloader with the boot button on the PCB.
+
+For all the CC13xx and CC26xx families, the ROM bootloader is configured through the `BL_CONFIG` 'register' in CCFG. `BOOTLOADER_ENABLE` should be set to `0xC5` to enable the bootloader in the first place.
 
 This is enough if the chip has not been programmed with a valid image. If a valid image is present, then the remaining fields of `BL_CONFIG` and the `ERASE_CONF` register must also be configured correctly:
 
