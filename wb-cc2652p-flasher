@@ -1,0 +1,31 @@
+#!/bin/bash
+
+set -e
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: wb-cc2652p-flasher <module number> <firmware file>"
+    exit 1
+fi
+
+if [ ! -e "$2" ]; then
+    echo "Firmware file $2 not found"
+    exit 1
+fi
+
+# find platform-dependant MOD# RTS pin number
+RTS_CHIP=$(gpiofind "MOD$1 RTS" | awk '{print $1}')
+RTS_GPIO=$(gpiofind "MOD$1 RTS" | awk '{print $2}')
+
+if [[ -z "$RTS_GPIO" || -z "$RTS_CHIP" ]]; then
+    echo "Cannot find GPIO RTS for module $1"
+    exit 1
+fi
+
+# switch zigbee chip into flashing mode using RTS pin
+echo "Using RTS_GPIO $RTS_GPIO"
+gpioset "$RTS_CHIP" $RTS_GPIO=1
+sleep 1
+gpioset "$RTS_CHIP" $RTS_GPIO=0
+sleep 1
+
+cc2538-bsl.py -evw -p "/dev/ttyMOD$1" "$2"

@@ -1,0 +1,1 @@
+buildDebSbuild defaultTargets: 'current-armhf'

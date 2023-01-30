@@ -1,0 +1,18 @@
+Source: wb-cc2652p-flasher
+Section: unknown
+Priority: extra
+Maintainer: Wiren Board Team <info@wirenboard.com>
+Build-Depends: debhelper (>= 10)
+Standards-Version: 4.5.0
+Homepage: https://github.com/wirenboard/cc2538-bsl
+
+Package: wb-cc2652p-flasher
+Architecture: all
+Depends: ${python3:Depends}, 
+         ${misc:Depends}, 
+         python3-serial, 
+         python3-intelhex, 
+         python3-magic,
+         gpiod
+Description: Texas Instruments CC13xx/CC2538/CC26xx SoC firmware update utility
+ The package includes Texas Instruments CC13xx/CC2538/CC26xx SoC firmware update utility.

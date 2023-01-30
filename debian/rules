@@ -1,0 +1,6 @@
+#!/usr/bin/make -f
+# makefile is used to avoid automatic python_distutils invoke
+
+
+%:
+	dh $@ --buildsystem=makefile
