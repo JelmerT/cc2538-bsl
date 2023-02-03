@@ -1,7 +1,7 @@
 TI CC13xx/CC2538/CC26xx Serial Boot Loader [![Build Status](https://travis-ci.org/JelmerT/cc2538-bsl.svg?branch=master)](https://travis-ci.org/JelmerT/cc2538-bsl)
 ==========================================
 
-(Additional Wiren Board `wb-cc2652p-flashed` command README see [here](README.wb.md))
+(Additional Wiren Board `wb-cc2652p-flasher` command README see [here](README.wb.md))
 
 This folder contains a python script that communicates with the boot loader of the Texas Instruments CC2538, CC26xx and CC13xx SoCs (System on Chips).
 It can be used to erase, program, verify and read the flash of those SoCs with a simple USB to serial converter.
