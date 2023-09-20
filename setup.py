@@ -29,7 +29,6 @@ setup(
         },
     install_requires=["pyserial"],
     extras_require={
-        '': ["intelhex"],
         'intelhex': ["python-magic"]
     },
     scripts=["cc2538-bsl.py"],
