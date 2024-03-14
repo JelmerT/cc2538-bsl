@@ -1,0 +1,10 @@
+[build-system]
+requires = [
+    "setuptools>=60",
+    "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cc2538-bsl"
+dynamic = ["version", "description", "readme", "requires-python", "license", "authors", "keywords", "classifiers", "dependencies", "optional-dependencies"]
+[tool.setuptools_scm]
