@@ -851,7 +851,7 @@ class CC26xx(Chip):
             chip = self._identify_cc26xx(pg_rev, protocols)
         elif wafer_id == 0xB9BE:
             chip = self._identify_cc13xx(pg_rev, protocols)
-        elif wafer_id == 0xBB41 or wafer_id == 0xBB7A:
+        elif wafer_id == 0xBB41 or wafer_id == 0xBB77 or wafer_id == 0xBB7A:
             chip = self._identify_cc13xx(pg_rev, protocols)
             self.page_size = 8192
 
