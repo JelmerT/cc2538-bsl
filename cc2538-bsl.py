@@ -1049,7 +1049,7 @@ def cli_setup():
     parser.add_argument('-v', '--verify', action='store_true', help='Verify (CRC32 check)')
     parser.add_argument('-r', '--read', action='store_true', help='Read')
     parser.add_argument('-l', '--len', type=int, default=0x80000, help='Length of read')
-    parser.add_argument('-p', '--port', type=int, help='Serial port (default: first USB-like port in /dev)')
+    parser.add_argument('-p', '--port', help='Serial port (default: first USB-like port in /dev)')
     parser.add_argument('-b', '--baud', type=int, default=500000, help='Baud speed')
     parser.add_argument('-a', '--address', type=int, help='Target address')
     parser.add_argument('-i', '--ieee-address', help='Set the secondary 64 bit IEEE address')
