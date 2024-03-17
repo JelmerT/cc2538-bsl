@@ -1147,7 +1147,7 @@ if __name__ == "__main__":
         if not args.address:
             args.address = device.flash_start_addr
 
-        if args.force_speed != 1 and device.has_cmd_set_xosc:
+        if not args.force_speed and device.has_cmd_set_xosc:
             if cmd.cmdSetXOsc():  # switch to external clock source
                 cmd.close()
                 args.baud = 1000000
