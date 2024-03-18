@@ -40,7 +40,6 @@
 from subprocess import Popen, PIPE
 
 import sys
-import getopt
 import glob
 import math
 import time
@@ -55,6 +54,9 @@ __version__ = "2.1"
 
 # Verbose level
 QUIET = 5
+
+# Default Baud
+DEFAULT_BAUD = 500000
 
 try:
     import serial
@@ -180,7 +182,7 @@ class CommandInterface(object):
     ACK_BYTE = 0xCC
     NACK_BYTE = 0x33
 
-    def open(self, aport=None, abaudrate=500000):
+    def open(self, aport=None, abaudrate=DEFAULT_BAUD):
         # Try to create the object using serial_for_url(), or fall back to the
         # old serial.Serial() where serial_for_url() is not supported.
         # serial_for_url() is a factory class and will return a different
@@ -1050,7 +1052,7 @@ def cli_setup():
     parser.add_argument('-r', '--read', action='store_true', help='Read')
     parser.add_argument('-l', '--len', type=int, default=0x80000, help='Length of read')
     parser.add_argument('-p', '--port', help='Serial port (default: first USB-like port in /dev)')
-    parser.add_argument('-b', '--baud', type=int, default=500000, help='Baud speed')
+    parser.add_argument('-b', '--baud', type=int, help=f"Baud speed (default: {DEFAULT_BAUD})")
     parser.add_argument('-a', '--address', type=int, help='Target address')
     parser.add_argument('-i', '--ieee-address', help='Set the secondary 64 bit IEEE address')
     parser.add_argument('--bootloader-active-high', action='store_true', help='Use active high signals to enter bootloader')
@@ -1064,6 +1066,13 @@ def cli_setup():
 
 if __name__ == "__main__":
     args = cli_setup()
+
+    force_speed = False
+
+    if args.baud:
+        force_speed = True
+    else:
+        args.baud = DEFAULT_BAUD
 
     if args.V:
         QUIET = 10
@@ -1147,7 +1156,7 @@ if __name__ == "__main__":
         if not args.address:
             args.address = device.flash_start_addr
 
-        if args.force_speed != 1 and device.has_cmd_set_xosc:
+        if not force_speed and device.has_cmd_set_xosc:
             if cmd.cmdSetXOsc():  # switch to external clock source
                 cmd.close()
                 args.baud = 1000000
