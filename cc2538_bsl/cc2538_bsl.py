@@ -1064,7 +1064,7 @@ def cli_setup():
 
     return parser.parse_args()
 
-if __name__ == "__main__":
+def main_cli():
     args = cli_setup()
 
     force_speed = False
@@ -1263,3 +1263,6 @@ if __name__ == "__main__":
         if QUIET >= 10:
             traceback.print_exc()
         exit('ERROR: %s' % str(err))
+
+if __name__ == "__main__":
+    main_cli()
