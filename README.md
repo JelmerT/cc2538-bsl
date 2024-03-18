@@ -16,7 +16,7 @@ To communicate with the uart port of the SoC you need a usb to serial converter:
 
 ### Dependencies
 
-This script uses the pyserial package to communicate with the serial port and chip (https://pypi.org/project/pyserial/). You can install it by running `pip install pyserial`.
+This script uses the pyserial package to communicate with the serial port and chip (https://pypi.org/project/pyserial/). You can install it by running `pip install pyserial`. Alternatively, if you use [Pipenv](https://pipenv.pypa.io/en/latest/), you can use `pipenv install`.
 
 If you want to be able to program your device from an Intel Hex file, you will need to install the IntelHex package: https://pypi.python.org/pypi/IntelHex (e.g. by running `pip install intelhex`).
 
@@ -70,6 +70,16 @@ The script will automatically select the first serial looking port from a USB to
 
 Before uploading your image make sure you start the boot loader on the SoC (`select` + `reset` on CC2538DK).
 You can find more info on the different options by executing `python cc2538-bsl.py -h`.
+
+#### Pipenv
+
+If you are using Pipenv, you an flash a device with the following command:
+
+```sh
+pipenv run flash /path/to/CC2652RB_coordinator_20220219.hex
+```
+
+**NOTE:** You can pass `-p /dev/cu.usbserial-1120` if your device is not auto-detected. Your `.hex` file path/name may be different.
 
 ### Remarks
 
