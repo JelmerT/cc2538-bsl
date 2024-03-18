@@ -1,10 +1,47 @@
 [build-system]
 requires = [
     "setuptools>=60",
-    "setuptools-scm>=8.0"]
+    "setuptools-scm>=8.0"
+]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cc2538-bsl"
-dynamic = ["version", "description", "readme", "requires-python", "license", "authors", "keywords", "classifiers", "dependencies", "optional-dependencies"]
+description="Script to communicate with Texas Instruments CC13xx/CC2538/CC26xx Serial Boot Loader ."
+keywords=[ "cc2538", "cc1310", "cc13xx", "bootloader", "cc26xx", "cc2650", "cc2640" ]
+authors = [ { name = "Jelmer Tiete", email = "jelmer@tiete.be" } ]
+readme = "README.md"
+license = { file = "LICENSE.md" }
+classifiers=[
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+requires-python = ">=3.4"
+dynamic = ["version"]
+dependencies = [ "pyserial" ]
+
+[project.urls]
+Home = "https://github.com/JelmerT/cc2538-bsl"
+Repository = "https://github.com/JelmerT/cc2538-bsl"
+Issues = "https://github.com/JelmerT/cc2538-bsl/issues"
+
 [tool.setuptools_scm]
+version_scheme = "post-release"
+local_scheme = "node-and-date"
+
+[project.optional-dependencies]
+cc2538-bsl = [ "intelhex" ]
+intelhex = [ "python-magic" ]
+
+[project.scripts]
+cc2538-bsl = "cc2538_bsl.cc2538_bsl:main_cli"
+# cc2538-bsl = "cc2538-bsl.py"
+
+[tool.setuptools]
+platforms = ["posix"]
