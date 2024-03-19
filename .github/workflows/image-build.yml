@@ -12,8 +12,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
-  #REGISTRY_IMAGE: ghcr.io/jelmert/cc2538-bsl
+  REGISTRY_IMAGE: ghcr.io/jelmert/cc2538-bsl
 
 # permissions are needed if pushing to ghcr.io
 permissions:
