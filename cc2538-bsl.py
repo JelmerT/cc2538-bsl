@@ -1221,7 +1221,7 @@ if __name__ == "__main__":
                 raise Exception("NO CRC32 match: Local = 0x%x, "
                                 "Target = 0x%x" % (crc_local, crc_target))
 
-        if args.ieee_address != 0:
+        if args.ieee_address:
             ieee_addr = parse_ieee_address(args.ieee_address)
             mdebug(5, "Setting IEEE address to %s"
                        % (':'.join(['%02x' % b
