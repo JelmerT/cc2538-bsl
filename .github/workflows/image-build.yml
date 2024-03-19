@@ -53,7 +53,7 @@ jobs:
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       -
-        name: Login to GitHub Container Registry
+        name: Login to Image Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -105,7 +105,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY_IMAGE }}
       -
-        name: Login to Docker Hub
+        name: Login to Image registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
