@@ -25,6 +25,15 @@ The script will try to auto-detect whether your firmware is a raw binary or an I
 
 If python-magic is _not_ installed, the script will try to auto-detect the firmware type by looking at the filename extension, but this is sub-optimal. If the extension is `.hex`, `.ihx` or `.ihex`, the script will assume that the firmware is an Intel Hex file. In all other cases, the firmware will be treated as raw binary.
 
+### Running the script
+To see the list of options, run `python3 cc2538-bsl.py -h`.
+
+To write the firmware, it is necessary to erase the current firmware on the device. Hence the option `-e` must be provided.
+
+Examples:
+* To write a regular firmware bin file: `python3 cc2538-bsl.py -e -w -v example/main.bin`
+* To write the firmware for the Sonoff Zigbee 3.0 USB Dongle Plus: `python3 cc2538-bsl.py --bootloader-sonoff-usb -e -v -w ~/Downloads/CC1352P2_CC2652P_launchpad_coordinator_20220219.hex
+
 ### CC2538
 
 Once you connected the SoC you need to make sure the serial boot loader is enabled. A chip without a valid image (program), as it comes from the factory, will automatically start the boot loader. After you upload an image to the chip, the "Image Valid" bits are set to 0 to indicate that a valid image is present in flash. On the next reset the boot loader won't be started and the image is immediately executed.   
