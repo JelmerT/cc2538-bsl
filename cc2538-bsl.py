@@ -241,6 +241,10 @@ class CommandInterface(object):
 
             set_bootloader_pin(1)
             set_reset_pin(0)
+
+            # wait to enter bootloader, then deassert bootloader pin
+            time.sleep(0.002)
+            set_reset_pin(1)
         else:
             set_bootloader_pin(1 if not dtr_active_high else 0)
             set_reset_pin(0)
