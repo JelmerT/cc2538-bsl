@@ -497,6 +497,19 @@ class CommandInterface(object):
         if self._wait_for_ack("Erase memory (0x26)", 10):
             return self.checkLastCmd()
 
+    def cmdSectorEraseCC26xx(self, addr):
+        cmd = 0x26
+        lng = 7
+
+        self._write(lng)  # send length
+        self._write(self._calc_checks(cmd, addr, 0))  # send checksum
+        self._write(cmd)  # send cmd
+        self._write(self._encode_addr(addr))  # send addr
+
+        mdebug(10, "*** Sector Erase command(0x26)")
+        if self._wait_for_ack("Sector Erase (0x26)", 10):
+            return self.checkLastCmd()
+
     def cmdBankErase(self):
         cmd = 0x2C
         lng = 3
@@ -783,10 +796,12 @@ class CC2538(Chip):
                % (':'.join('%02X' % x for x in ieee_addr)))
 
     def erase(self):
+        return self.eraseRange(self.flash_start_addr, self.size)
+
+    def eraseRange(self, addr, size):
         mdebug(5, "Erasing %s bytes starting at address 0x%08X"
-               % (self.size, self.flash_start_addr))
-        return self.command_interface.cmdEraseMemory(self.flash_start_addr,
-                                                     self.size)
+               % (size, addr))
+        return self.command_interface.cmdEraseMemory(addr, size)
 
     def read_memory(self, addr):
         # CC2538's COMMAND_MEMORY_READ sends each 4-byte number in inverted
@@ -927,6 +942,15 @@ class CC26xx(Chip):
     def erase(self):
         mdebug(5, "Erasing all main bank flash sectors")
         return self.command_interface.cmdBankErase()
+
+    def eraseRange(self, addr, size):
+        mdebug(5, "Erasing %s bytes starting at address 0x%08X"
+               % (size, addr))
+        for curAddr in range(addr, addr + size, self.page_size):
+            mdebug(6, "Erasing sector starting at address 0x%08X" % curAddr)
+            if not self.command_interface.cmdSectorEraseCC26xx(curAddr):
+                return 0
+        return 1
 
     def read_memory(self, addr):
         # CC26xx COMMAND_MEMORY_READ returns contents in the same order as
@@ -1181,10 +1205,11 @@ if __name__ == "__main__":
 
         if args.erase_page:
             erase_range = parse_page_address_range(device, args.erase_page)
-            mdebug(5, "Erasing %d bytes at addres 0x%x"
-                   % (erase_range[1], erase_range[0]))
-            cmd.cmdEraseMemory(erase_range[0], erase_range[1])
-            mdebug(5, "    Partial erase done                  ")
+            mdebug(5, "    Performing partial erase")
+            if device.eraseRange(erase_range[0], erase_range[1]):
+                mdebug(5, "    Partial erase done                  ")
+            else:
+                raise CmdException("Partial erase failed")
 
         if args.write:
             # TODO: check if boot loader back-door is open, need to read
@@ -1200,7 +1225,7 @@ if __name__ == "__main__":
             # Round up to ensure page alignment
             erase_len = device.page_align_up(len(firmware.bytes))
             erase_len = min(erase_len, device.size)
-            if cmd.cmdEraseMemory(args.address, erase_len):
+            if device.eraseRange(args.address, erase_len):
                 mdebug(5, "    Erase before write done                 ")
             if cmd.writeMemory(args.address, firmware.bytes):
                 mdebug(5, "    Write done                              ")
