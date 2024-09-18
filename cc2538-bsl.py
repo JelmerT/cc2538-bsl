@@ -661,7 +661,7 @@ class CommandInterface(object):
         if (lng == 524288):  # check if file is for 512K model
             # check the boot loader enable bit  (only for 512K model)
             if not ((data[524247] & (1 << 4)) >> 4):
-                if not (conf['force'] or
+                if not (args.force or
                         query_yes_no("The boot loader backdoor is not enabled "
                                      "in the firmware you are about to write "
                                      "to the target. You will NOT be able to "
@@ -732,7 +732,7 @@ class Chip(object):
         return getattr(self.command_interface, self.crc_cmd)(address, size)
 
     def disable_bootloader(self):
-        if not (conf['force'] or
+        if not (args.force or
                 query_yes_no("Disabling the bootloader will prevent you from "
                              "using this script until you re-enable the "
                              "bootloader using JTAG. Do you want to continue?",
