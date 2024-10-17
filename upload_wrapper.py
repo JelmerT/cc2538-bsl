@@ -101,7 +101,7 @@ def load_uncaught_error_response(error):
 
 
 class CoprocessorUploader:
-    REQUIRED_PARAMETERS_COUNT = 14
+    REQUIRED_PARAMETERS_COUNT = 6
 
     def __init__(self):
         self.parameters_ok = False
@@ -119,9 +119,7 @@ class CoprocessorUploader:
             reset_script_path = extract_reset_script_path(args[1])
 
             self.coprocessors = [
-                extract_coprocessor(args[2:6]),
-                extract_coprocessor(args[6:10]),
-                extract_coprocessor(args[10:14])]
+                extract_coprocessor(args[2:6])]
             self.reset_controls = [
                 CoprocessorResetControl(reset_script_path, coprocessor)
                 for coprocessor in self.coprocessors
