@@ -120,6 +120,9 @@ class CoprocessorUploader:
 
             self.coprocessors = [
                 extract_coprocessor(args[2:6])]
+
+            print(self.coprocessors)
+            exit    
             self.reset_controls = [
                 CoprocessorResetControl(reset_script_path, coprocessor)
                 for coprocessor in self.coprocessors
@@ -139,13 +142,7 @@ class CoprocessorUploader:
             self.reset_controls[coprocessor_index].reset_without_backdoor()
 
     def _run_one_coprocessor(self, coprocessor_index):
-        if not self.coprocessors[coprocessor_index].should_upload:
-            self._response_coprocessor_not_requested(coprocessor_index)
-
-        else:
-            self.reset_controls[coprocessor_index].reset_with_backdoor()
             self._upload_one_coprocessor(coprocessor_index)
-            self.reset_controls[coprocessor_index].reset_without_backdoor()
 
     def _response_setup_fail(self, error):
         self.response['operations'][0]['is_success'] = False
@@ -172,12 +169,14 @@ class CoprocessorUploader:
         operation_details = 'Not Started'
 
         for _ in range(MAX_RETRIES):
+            self.reset_controls[coprocessor_index].reset_with_backdoor()
             try:
                 # import is wrapped in try block to catch import errors
 
                 print(upload_args)
                 from cc2538 import flash_main
                 flash_main(upload_args)
+                break
 
             except BaseException as error:
                 operation_details = f'{error}'
@@ -188,6 +187,7 @@ class CoprocessorUploader:
                 break
 
         if success:
+            self._upload_one_coprocessor(coprocessor_index)
             self._response_coprocessor_success(coprocessor_index)
         else:
             self._response_coprocessor_fail(
@@ -205,9 +205,6 @@ if __name__ == '__main__':
 
     except BaseException as unknown_error:
         response = load_uncaught_error_response(unknown_error)
-
-    finally:
-        uploader.reset_all_coprocessors()
 
     # result is echoed to be readable for the calling script
     print(response)
