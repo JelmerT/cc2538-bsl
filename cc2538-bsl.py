@@ -125,7 +125,7 @@ class FirmwareFile(object):
             from magic import from_file
             file_type = from_file(path, mime=True)
 
-            if file_type == 'text/plain':
+            if file_type == 'text/plain' or file_type == 'text/x-hex':
                 mdebug(5, "Firmware file: Intel Hex")
                 self.__read_hex(path)
             elif file_type == 'application/octet-stream':
