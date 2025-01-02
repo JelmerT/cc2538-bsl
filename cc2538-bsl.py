@@ -1268,6 +1268,10 @@ if __name__ == "__main__":
 
             mdebug(5, "Reading %s bytes starting at address 0x%x"
                    % (length, args.address))
+
+            if args.address + length > device.size:
+                mdebug(5, "Warning: reading beyond device size!")
+
             with open(args.file, 'wb') as f:
                 for i in range(0, length >> 2):
                     # reading 4 bytes at a time
