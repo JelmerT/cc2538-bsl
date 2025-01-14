@@ -193,9 +193,9 @@ class CommandInterface(object):
         # this stage: We need to set its attributes up depending on what object
         # we get.
         try:
-            self.sp = serial.serial_for_url(aport, do_not_open=True, timeout=10, write_timeout=10)
+            self.sp = serial.serial_for_url(aport, do_not_open=True, timeout=20, write_timeout=20)
         except AttributeError:
-            self.sp = serial.Serial(port=None, timeout=10, write_timeout=10)
+            self.sp = serial.Serial(port=None, timeout=20, write_timeout=20)
             self.sp.port = aport
 
         if ((os.name == 'nt' and isinstance(self.sp, serial.serialwin32.Serial)) or \
@@ -206,7 +206,7 @@ class CommandInterface(object):
             self.sp.stopbits=1                # stop bits
             self.sp.xonxoff=0                 # s/w (XON/XOFF) flow control
             self.sp.rtscts=0                  # h/w (RTS/CTS) flow control
-            self.sp.timeout=0.5               # set the timeout value
+            self.sp.timeout=1.0               # set the timeout value
 
         self.sp.open()
 
@@ -266,7 +266,7 @@ class CommandInterface(object):
     def close(self):
         self.sp.close()
 
-    def _wait_for_ack(self, info="", timeout=1):
+    def _wait_for_ack(self, info="", timeout=4):
         stop = time.time() + timeout
         got = bytearray(2)
         while got[-2] != 00 or got[-1] not in (CommandInterface.ACK_BYTE,
@@ -380,7 +380,7 @@ class CommandInterface(object):
         mdebug(10, "*** sending synch sequence")
         self._write(cmd)  # send U
         self._write(cmd)  # send U
-        return self._wait_for_ack("Synch (0x55 0x55)", 2)
+        return self._wait_for_ack("Synch (0x55 0x55)", 8)
 
     def checkLastCmd(self):
         stat = self.cmdGetStatus()
