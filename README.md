@@ -71,6 +71,12 @@ The script will automatically select the first serial looking port from a USB to
 Before uploading your image make sure you start the boot loader on the SoC (`select` + `reset` on CC2538DK).
 You can find more info on the different options by executing `python cc2538-bsl.py -h`.
 
+Note that to write the firmware, it is necessary to erase the current firmware on the device; the option `-e` must be provided.
+
+Examples:
+* To write a regular firmware bin file: `python3 cc2538-bsl.py -e -w -v example/main.bin`
+* To write the firmware for the Sonoff Zigbee 3.0 USB Dongle Plus: `python3 cc2538-bsl.py --bootloader-sonoff-usb -e -v -w ~/Downloads/CC1352P2_CC2652P_launchpad_coordinator_20220219.hex`
+
 ### Remarks
 
 * Programming multiple SoCs at the same time is not yet supported.
