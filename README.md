@@ -10,6 +10,12 @@ To run this script you need a Python interpreter, Linux and Mac users should be 
 
 Alternatively, Docker can be used to run this script as a one-liner without the need to install dependencies, see [git-developer/ti-cc-tool](https://github.com/git-developer/ti-cc-tool) for details.
 
+Or if you [install Nix](https://github.com/DeterminateSystems/nix-installer) you can run it like this e.g.:
+
+```
+$ nix run github:JelmerT/cc2538-bsl -- --help
+```
+
 To communicate with the uart port of the SoC you need a usb to serial converter:
 * If you use the SmartRF06 board with an Evaluation Module (EM) mounted on it you can use the on-board ftdi chip. Make sure the "Enable UART" jumper is set on the board. You can have a look [here][contiki cc2538dk] for more info on drivers for this chip on different operating systems.
 * If you use a different platform, there are many cheap USB to UART converters available, but make sure you use one with 3.3v voltage levels.
