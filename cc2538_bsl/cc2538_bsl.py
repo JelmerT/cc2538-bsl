@@ -241,6 +241,12 @@ class CommandInterface(object):
 
             set_bootloader_pin(1)
             set_reset_pin(0)
+
+            # Let the chip register the reset while the bootloader pin is
+            # asserted, then release reset (RTS) so it comes out of reset
+            # into the bootloader instead of being held in reset.
+            time.sleep(0.002)
+            set_reset_pin(1)
         else:
             set_bootloader_pin(1 if not dtr_active_high else 0)
             set_reset_pin(0)
