@@ -20,3 +20,9 @@ coverage.xml
 
 # venv
 .venv
+
+# pytest
+.pytest_cache/
+
+# macOS
+.DS_Store

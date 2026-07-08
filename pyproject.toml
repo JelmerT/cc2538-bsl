@@ -22,7 +22,7 @@ classifiers=[
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering",
 ]
-requires-python = ">=3.4"
+requires-python = ">=3.6"
 dynamic = ["version"]
 dependencies = [ "pyserial" ]
 
@@ -38,6 +38,7 @@ local_scheme = "node-and-date"
 [project.optional-dependencies]
 cc2538-bsl = [ "intelhex" ]
 intelhex = [ "python-magic" ]
+test = [ "pytest" ]
 
 [project.scripts]
 cc2538-bsl = "cc2538_bsl.cc2538_bsl:main_cli"
