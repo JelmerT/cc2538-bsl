@@ -69,7 +69,13 @@ These settings are very useful for development, but enabling failure analysis in
 The script will automatically select the first serial looking port from a USB to uart converter in `/dev` (OSX, Linux) for uploading. Be careful as on the SmartRF06B board under Linux this might be the jtag interface as apposed to the uart interface. In this case select the correct serial port manually with the `-p` option. Serial port selection under Windows needs testing.
 
 Before uploading your image make sure you start the boot loader on the SoC (`select` + `reset` on CC2538DK).
-You can find more info on the different options by executing `python cc2538-bsl.py -h`.
+
+Install the tool and its `cc2538-bsl` command with `pip install .` from a checkout, or run it in place with `python -m cc2538_bsl.cc2538_bsl`. You can find more info on the different options by running `cc2538-bsl -h`.
+
+To write firmware, the target flash has to be erased first, so pass `-e` together with `-w`. Examples:
+
+* Write a raw binary firmware: `cc2538-bsl -e -w -v example/main.bin`
+* Write firmware to a Sonoff Zigbee 3.0 USB Dongle Plus: `cc2538-bsl --bootloader-sonoff-usb -e -w -v CC1352P2_CC2652P_launchpad_coordinator.hex`
 
 ### Remarks
 
