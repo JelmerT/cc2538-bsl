@@ -649,7 +649,7 @@ class CommandInterface(object):
 
 # Complex commands section
 
-    def writeMemory(self, addr, data):
+    def writeMemory(self, addr, data, force=False):
         lng = len(data)
         # amount of data bytes transferred per packet (theory: max 252 + 3)
         trsf_size = 248
@@ -661,7 +661,7 @@ class CommandInterface(object):
         if (lng == 524288):  # check if file is for 512K model
             # check the boot loader enable bit  (only for 512K model)
             if not ((data[524247] & (1 << 4)) >> 4):
-                if not (args.force or
+                if not (force or
                         query_yes_no("The boot loader backdoor is not enabled "
                                      "in the firmware you are about to write "
                                      "to the target. You will NOT be able to "
@@ -724,15 +724,15 @@ class Chip(object):
     def page_to_addr(self, pages):
         addresses = []
         for page in pages:
-            addresses.append(int(device.flash_start_addr) +
+            addresses.append(int(self.flash_start_addr) +
                              int(page)*self.page_size)
         return addresses
 
     def crc(self, address, size):
         return getattr(self.command_interface, self.crc_cmd)(address, size)
 
-    def disable_bootloader(self):
-        if not (args.force or
+    def disable_bootloader(self, force=False):
+        if not (force or
                 query_yes_no("Disabling the bootloader will prevent you from "
                              "using this script until you re-enable the "
                              "bootloader using JTAG. Do you want to continue?",
@@ -741,7 +741,7 @@ class Chip(object):
 
         pattern = struct.pack('<L', self.bootloader_dis_val)
 
-        if cmd.writeMemory(self.bootloader_address, pattern):
+        if self.command_interface.writeMemory(self.bootloader_address, pattern):
             mdebug(5, "    Set bootloader closed done                      ")
         else:
             raise CmdException("Set bootloader closed failed             ")
@@ -861,6 +861,16 @@ class CC26xx(Chip):
         elif wafer_id == 0xBB41 or wafer_id == 0xBB77 or wafer_id == 0xBB7A:
             chip = self._identify_cc13xx(pg_rev, protocols)
             self.page_size = 8192
+        else:
+            # Unknown wafer_id: continue with a generic name and 8 KB pages
+            # (the layout used by recent CC13xx/CC26xx parts) instead of
+            # crashing with an UnboundLocalError. See issues #150, #153.
+            chip = "Unknown (wafer_id=0x%X)" % wafer_id
+            self.page_size = 8192
+            mdebug(5, "Warning: unrecognized wafer_id 0x%X, assuming a "
+                      "CC13xx/CC26xx-class part with %d byte flash pages. "
+                      "Flashing may not work correctly; please report this "
+                      "chip." % (wafer_id, self.page_size))
 
         # Read flash size, calculate and store bootloader disable address
         self.size = self.command_interface.cmdMemReadCC26xx(
@@ -992,13 +1002,16 @@ def parse_ieee_address(inaddr):
     except ValueError:
         # inaddr is not a hex string, look for other formats
         if ':' in inaddr:
-            bytes = inaddr.split(':')
+            octets = inaddr.split(':')
         elif '-' in inaddr:
-            bytes = inaddr.split('-')
-        if len(bytes) != 8:
+            octets = inaddr.split('-')
+        else:
+            raise ValueError("Supplied IEEE address is not a hex integer nor "
+                             "a ':' or '-' separated list of 8 bytes")
+        if len(octets) != 8:
             raise ValueError("Supplied IEEE address does not contain 8 bytes")
         addr = 0
-        for i, b in zip(range(8), bytes):
+        for i, b in zip(range(8), octets):
             try:
                 addr += int(b, 16) << (56-(i*8))
             except ValueError:
@@ -1034,7 +1047,7 @@ def parse_page_address_range(device, pg_range):
     page_addr = []
     # check if first argument is character
     if values[0].isalpha():
-        values[0].lower()
+        values[0] = values[0].lower()
         if values[0] == 'p' or values[0] == 'page':
             if values[0] == 'p':
                 values[1:] = device.page_to_addr(values[1:])
@@ -1057,7 +1070,7 @@ def version():
         p.stderr.close()
         line = p.stdout.readlines()[0]
         return line.decode('utf-8').strip()
-    except:
+    except Exception:
         # We're not in a git repo, or git failed, use fixed version string.
         return __version__
 
@@ -1089,6 +1102,8 @@ def cli_setup():
     return parser.parse_args()
 
 def main_cli():
+    global QUIET
+
     args = cli_setup()
 
     force_speed = False
@@ -1169,7 +1184,7 @@ def main_cli():
         chip_id = cmd.cmdGetChipId()
         chip_id_str = CHIP_ID_STRS.get(chip_id, None)
 
-        if chip_id_str == None:
+        if chip_id_str is None:
             mdebug(10, '    Unrecognized chip ID. Trying CC13xx/CC26xx')
             device = CC26xx(cmd)
         else:
@@ -1214,7 +1229,7 @@ def main_cli():
         if args.write:
             # TODO: check if boot loader back-door is open, need to read
             #       flash size first to get address
-            if cmd.writeMemory(args.address, firmware.bytes):
+            if cmd.writeMemory(args.address, firmware.bytes, args.force):
                 mdebug(5, "    Write done                                ")
             else:
                 raise CmdException("Write failed                       ")
@@ -1227,7 +1242,7 @@ def main_cli():
             erase_len = min(erase_len, device.size)
             if device.eraseRange(args.address, erase_len):
                 mdebug(5, "    Erase before write done                 ")
-            if cmd.writeMemory(args.address, firmware.bytes):
+            if cmd.writeMemory(args.address, firmware.bytes, args.force):
                 mdebug(5, "    Write done                              ")
             else:
                 raise CmdException("Write failed                       ")
@@ -1246,7 +1261,7 @@ def main_cli():
                 raise Exception("NO CRC32 match: Local = 0x%x, "
                                 "Target = 0x%x" % (crc_local, crc_target))
 
-        if args.ieee_address != 0 and args.ieee_address != None:
+        if args.ieee_address != 0 and args.ieee_address is not None:
             ieee_addr = parse_ieee_address(args.ieee_address)
             mdebug(5, "Setting IEEE address to %s"
                        % (':'.join(['%02x' % b
@@ -1284,7 +1299,7 @@ def main_cli():
             mdebug(5, "    Read done                                ")
 
         if args.disable_bootloader:
-            device.disable_bootloader()
+            device.disable_bootloader(args.force)
 
         cmd.cmdReset()
 
