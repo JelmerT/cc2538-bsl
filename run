@@ -49,8 +49,6 @@ main() {
     log "Downloading firmware from ${FIRMWARE_URL}"
     source="$(wget "${FIRMWARE_URL}" 2>&1 | sed -nE "s/^'(.+)' saved$/\1/p")"
     [ -n "${source}" ] || error "Download of firmware was not successful."
-  else
-    log "WARNING: neither FIRMWARE_URL nor FIRMWARE_FILE is set as environment variable."
   fi
   run "${source-}" "${@}"
 }
