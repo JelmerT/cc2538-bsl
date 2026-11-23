@@ -59,6 +59,24 @@ def test_version_output():
     assert result.stdout.strip()
 
 
+def test_version_ignores_git_repo_in_cwd(tmp_path):
+    git = ["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+    subprocess.run(git + ["init", "-q"], cwd=str(tmp_path), check=True)
+    subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"],
+                   cwd=str(tmp_path), check=True)
+    subprocess.run(git + ["tag", "9.9.9"], cwd=str(tmp_path), check=True)
+
+    result = subprocess.run(
+        [sys.executable, "-m", MODULE, "--version"],
+        cwd=str(tmp_path),
+        env=dict(os.environ, PYTHONPATH=REPO_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert result.returncode == 0
+    assert b"9.9.9" not in result.stdout
+
+
 def test_missing_file_argument_errors():
     # 'file' is a required positional argument.
     run_cli("-w", expect_error=True)

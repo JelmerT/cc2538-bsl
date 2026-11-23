@@ -1,4 +1,4 @@
-TI CC13xx/CC2538/CC26xx Serial Boot Loader [![Build Status](https://travis-ci.org/JelmerT/cc2538-bsl.svg?branch=master)](https://travis-ci.org/JelmerT/cc2538-bsl)
+TI CC13xx/CC2538/CC26xx Serial Boot Loader [![Tests](https://github.com/JelmerT/cc2538-bsl/actions/workflows/test.yml/badge.svg)](https://github.com/JelmerT/cc2538-bsl/actions/workflows/test.yml)
 ==========================================
 
 This folder contains a python script that communicates with the boot loader of the Texas Instruments CC2538, CC26xx and CC13xx SoCs (System on Chips).

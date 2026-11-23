@@ -37,7 +37,6 @@
 # Make sure you don't lock yourself out!! (enable backdoor in your firmware)
 # More info at https://github.com/JelmerT/cc2538-bsl
 
-from subprocess import Popen, PIPE
 
 import sys
 import glob
@@ -95,7 +94,7 @@ class CmdException(Exception):
     pass
 
 
-class FirmwareFile(object):
+class FirmwareFile:
     HEX_FILE_EXTENSIONS = ('hex', 'ihx', 'ihex')
 
     def __init__(self, path):
@@ -171,13 +170,13 @@ class FirmwareFile(object):
             The firmware's CRC32, ready for comparison with the CRC
             returned by the ROM bootloader's COMMAND_CRC32
         """
-        if self._crc32 == None:
+        if self._crc32 is None:
             self._crc32 = binascii.crc32(bytearray(self.bytes)) & 0xffffffff
 
         return self._crc32
 
 
-class CommandInterface(object):
+class CommandInterface:
 
     ACK_BYTE = 0xCC
     NACK_BYTE = 0x33
@@ -317,11 +316,11 @@ class CommandInterface(object):
                  cmd) & 0xFF)
 
     def _write(self, data, is_retry=False):
-        if type(data) == int:
+        if isinstance(data, int):
             assert data < 256
             goal = 1
             written = self.sp.write(bytes([data]))
-        elif type(data) == bytes or type(data) == bytearray:
+        elif isinstance(data, (bytes, bytearray)):
             goal = len(data)
             written = self.sp.write(data)
         else:
@@ -334,7 +333,7 @@ class CommandInterface(object):
             if is_retry and written == 0:
                 raise CmdException("Failed to write data on the serial bus")
             mdebug(10, "*** Retrying write for remainder")
-            if type(data) == int:
+            if isinstance(data, int):
                 return self._write(data, is_retry=True)
             else:
                 return self._write(data[written:], is_retry=True)
@@ -399,7 +398,7 @@ class CommandInterface(object):
             return 1
         else:
             stat_str = RETURN_CMD_STRS.get(stat[0], None)
-            if stat_str == None:
+            if stat_str is None:
                 mdebug(0, "Warning: unrecognized status returned "
                           "0x%x" % stat[0])
             else:
@@ -709,7 +708,7 @@ class CommandInterface(object):
         return self.cmdSendData(data[offs:offs+lng])  # send last data packet
 
 
-class Chip(object):
+class Chip:
     def __init__(self, command_interface):
         self.command_interface = command_interface
 
@@ -755,7 +754,7 @@ class Chip(object):
 
 class CC2538(Chip):
     def __init__(self, command_interface):
-        super(CC2538, self).__init__(command_interface)
+        super().__init__(command_interface)
         self.flash_start_addr = 0x00200000
         self.addr_ieee_address_secondary = 0x0027ffcc
         self.has_cmd_set_xosc = True
@@ -824,7 +823,7 @@ class CC26xx(Chip):
     PROTO_MASK_BOTH = 0x05
 
     def __init__(self, command_interface):
-        super(CC26xx, self).__init__(command_interface)
+        super().__init__(command_interface)
         self.bootloader_dis_val = 0x00000000
         self.crc_cmd = "cmdCRC32CC26xx"
         self.page_size = 4096
@@ -980,7 +979,7 @@ def query_yes_no(question, default="yes"):
              "ye": True,
              "no": False,
              "n": False}
-    if default == None:
+    if default is None:
         prompt = " [y/n] "
     elif default == "yes":
         prompt = " [Y/n] "
@@ -992,7 +991,7 @@ def query_yes_no(question, default="yes"):
     while True:
         sys.stdout.write(question + prompt)
         choice = input().lower()
-        if default != None and choice == '':
+        if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
             return valid[choice]
@@ -1069,15 +1068,12 @@ def parse_page_address_range(device, pg_range):
 
 
 def version():
-    # Get the version using "git describe".
+    # Use the installed package's version, set from git tags at build time.
     try:
-        p = Popen(['git', 'describe', '--tags', '--match', '[0-9]*'],
-                  stdout=PIPE, stderr=PIPE)
-        p.stderr.close()
-        line = p.stdout.readlines()[0]
-        return line.decode('utf-8').strip()
+        from importlib.metadata import version as package_version
+        return package_version('cc2538-bsl')
     except Exception:
-        # We're not in a git repo, or git failed, use fixed version string.
+        # Not installed, or Python < 3.8: use fixed version string.
         return __version__
 
 
@@ -1301,7 +1297,6 @@ def main_cli():
                            % (args.address + (i * 4), rdata[0], rdata[1],
                               rdata[2], rdata[3]), '\r')
                     f.write(rdata)
-                f.close()
             mdebug(5, "    Read done                                ")
 
         if args.disable_bootloader:
