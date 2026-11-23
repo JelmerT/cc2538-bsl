@@ -8,7 +8,8 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04 has no setup-python builds for Python 3.8 and 3.9.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
