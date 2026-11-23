@@ -8,7 +8,15 @@ It can be used to erase, program, verify and read the flash of those SoCs with a
 
 To run this script you need a Python interpreter, Linux and Mac users should be fine, Windows users have a look here: [Python Download][python].
 
-Alternatively, Docker can be used to run this script as a one-liner without the need to install dependencies, see [git-developer/ti-cc-tool](https://github.com/git-developer/ti-cc-tool) for details.
+Alternatively, Docker can be used to run this script as a one-liner without the need to install dependencies, see [git-developer/ti-cc-tool](https://github.com/git-developer/ti-cc-tool) for details. The image from this repository runs as a non-root user, so on Linux pass the serial device's group to give it access:
+
+    docker run --rm --device /dev/ttyUSB0 --group-add "$(stat -c %g /dev/ttyUSB0)" \
+      -v "$PWD:/fw:ro" -e FIRMWARE_FILE=/fw/firmware.hex \
+      ghcr.io/jelmert/cc2538-bsl:main -p /dev/ttyUSB0 -e -w -v
+
+To build the image from a git worktree, set the version explicitly:
+
+    docker build --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_CC2538_BSL="$(git describe --tags | sed 's/-/.post/;s/-.*//')" .
 
 To communicate with the uart port of the SoC you need a usb to serial converter:
 * If you use the SmartRF06 board with an Evaluation Module (EM) mounted on it you can use the on-board ftdi chip. Make sure the "Enable UART" jumper is set on the board. You can have a look [here][contiki cc2538dk] for more info on drivers for this chip on different operating systems.
