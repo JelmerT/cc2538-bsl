@@ -37,7 +37,6 @@
 # Make sure you don't lock yourself out!! (enable backdoor in your firmware)
 # More info at https://github.com/JelmerT/cc2538-bsl
 
-from subprocess import Popen, PIPE
 
 import sys
 import glob
@@ -1069,15 +1068,12 @@ def parse_page_address_range(device, pg_range):
 
 
 def version():
-    # Get the version using "git describe".
+    # Use the installed package's version, set from git tags at build time.
     try:
-        p = Popen(['git', 'describe', '--tags', '--match', '[0-9]*'],
-                  stdout=PIPE, stderr=PIPE)
-        p.stderr.close()
-        line = p.stdout.readlines()[0]
-        return line.decode('utf-8').strip()
+        from importlib.metadata import version as package_version
+        return package_version('cc2538-bsl')
     except Exception:
-        # We're not in a git repo, or git failed, use fixed version string.
+        # Not installed, or Python < 3.8: use fixed version string.
         return __version__
 
 
