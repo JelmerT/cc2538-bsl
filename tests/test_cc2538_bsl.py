@@ -14,6 +14,7 @@ import binascii
 import shutil
 import subprocess
 
+import argparse
 import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1996,10 +1997,24 @@ def test_bad_options_rejected_before_connecting(fake_cli, tmp_path, capsys,
 
 @pytest.mark.parametrize("value, expected", [
     ("0x00200000", 0x200000), ("2097152", 0x200000), ("0100", 100),
-    ("0X10", 16),
+    ("0X10", 16), ("-4", -4), ("-0x10", -16),
 ])
 def test_parse_int(value, expected):
     assert bsl.parse_int(value) == expected
+
+
+@pytest.mark.parametrize("value", ["0b100", "0o17", "1_000", "zz", "", "0x"])
+def test_parse_int_rejects(value):
+    with pytest.raises(argparse.ArgumentTypeError):
+        bsl.parse_int(value)
+
+
+def test_bad_number_message(fake_cli, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        fake_cli("-r", "-a", "zz", str(tmp_path / "out.bin"))
+    err = capsys.readouterr().err
+    assert "expected a decimal or 0x-prefixed integer" in err
+    assert "parse_int" not in err
 
 
 def test_hex_address_accepted(fake_cli, tmp_path):

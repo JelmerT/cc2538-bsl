@@ -47,6 +47,7 @@ import struct
 import binascii
 import traceback
 import argparse
+import re
 import subprocess
 
 # version
@@ -1673,10 +1674,13 @@ class _VersionAction(argparse.Action):
 
 def parse_int(value):
     """Parse a decimal or 0x-prefixed integer for -a, -l and -b."""
-    try:
-        return int(value, 0)
-    except ValueError:
-        return int(value, 10)  # decimal with leading zeros
+    match = re.fullmatch(r'(-?)(?:0[xX]([0-9a-fA-F]+)|([0-9]+))', value)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            "expected a decimal or 0x-prefixed integer, got %r" % value)
+    sign, hex_digits, dec_digits = match.groups()
+    number = int(hex_digits, 16) if hex_digits else int(dec_digits, 10)
+    return -number if sign else number
 
 
 def cli_setup():
@@ -1693,7 +1697,7 @@ def cli_setup():
     parser.add_argument('-r', '--read', action='store_true', help='Read')
     parser.add_argument('-l', '--len', type=parse_int, help='Length of read (default: to the end of flash). Decimal unless prefixed with 0x')
     parser.add_argument('-p', '--port', help='Serial port (default: first USB-like port in /dev)')
-    parser.add_argument('-b', '--baud', type=parse_int, help=f"Baud speed (default: {DEFAULT_BAUD})")
+    parser.add_argument('-b', '--baud', type=parse_int, help=f"Baud speed (default: {DEFAULT_BAUD}). Decimal unless prefixed with 0x")
     parser.add_argument('-a', '--address', type=parse_int, help='Target address. Decimal unless prefixed with 0x')
     parser.add_argument('-i', '--ieee-address', help='Set the secondary 64 bit IEEE address')
     parser.add_argument('--bootloader-active-high', action='store_true', help='Use active high signals to enter bootloader')
