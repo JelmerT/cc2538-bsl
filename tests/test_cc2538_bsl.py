@@ -242,6 +242,9 @@ class _FakeDevice(bsl.Chip):
         self.bootloader_address = 0x1000 - 40
         self.bootloader_dis_val = 0
 
+    def ccfg_range(self):
+        return 0x1000 - 44, 44
+
     def _bootloader_enabled(self, word):
         return word != 0
 
@@ -1012,43 +1015,15 @@ def _ccfg_tail_device():
     return device
 
 
-def test_ccfg_tail_warns_when_erase_wipes_bl_config():
-    image = bytearray(0x10)
-    device = _ccfg_tail_device()
-    assert device.image_disables_bootloader(image, 0x134, True) is True
-    assert device.image_disables_bootloader(image, 0x134, False) is False
-
-
 def test_blank_ccfg_tail_does_not_warn():
     image = bytearray(b"\xFF" * 0x10)
     assert _ccfg_tail_device().image_disables_bootloader(
-        image, 0x134, True) is False
+        image, 0x134) is False
 
 
 def test_app_image_before_ccfg_does_not_warn_on_mass_erase():
     assert _ccfg_tail_device().image_disables_bootloader(
-        bytearray(0x80), 0, True) is False
-
-
-@pytest.mark.parametrize("options, covered", [
-    (["-w", "-a", str(0xFDC)], False),
-    (["-f", "-W", "-a", str(0xFDC)], True),
-    (["-e", "-w", "-a", str(0xFDC)], True),
-    (["-E", "a,0xF00,0x1000", "-w", "-a", str(0xFDC)], True),
-    (["-E", "a,0x100,0x200", "-w", "-a", str(0xFDC)], False),
-])
-def test_cli_reports_erased_bl_config(fake_cli, monkeypatch, tmp_path, options, covered):
-    seen = []
-
-    def record(self, image, address, erases_bl_config=False):
-        seen.append(erases_bl_config)
-        return False
-
-    monkeypatch.setattr(_FakeDevice, "image_disables_bootloader", record)
-    fw = tmp_path / "fw.bin"
-    fw.write_bytes(b"\x01" * 8)
-    fake_cli(*options, str(fw))
-    assert seen == [covered]
+        bytearray(0x80), 0) is False
 
 
 def test_unaligned_erase_write_rejected_before_erase(fake_cli, tmp_path):
@@ -1066,14 +1041,6 @@ def test_forced_erase_write_outside_flash_has_no_force_hint(fake_cli, tmp_path):
     with pytest.raises(SystemExit) as exc:
         fake_cli("-f", "-W", "-a", str(0x2000), str(fw))
     assert "--force" not in str(exc.value.code)
-
-
-def test_blank_bl_config_only_matters_when_erased():
-    device = _ccfg_tail_device()
-    image = bytearray(0x100) + bytearray(88)
-    image[0x130:0x134] = b"\xFF" * 4
-    assert device.image_disables_bootloader(image, 0, False) is False
-    assert device.image_disables_bootloader(image, 0, True) is True
 
 
 def test_erase_write_wiping_ccfg_prompts(fake_cli, monkeypatch, tmp_path):
@@ -1109,3 +1076,74 @@ def test_interrupt_during_reset_is_contained():
             raise KeyboardInterrupt
 
     bsl.reset_target(Cmd())
+
+
+def test_ccfg_tail_without_bl_config_warns():
+    assert _ccfg_tail_device().image_disables_bootloader(
+        bytearray(0x10), 0x134) is True
+
+
+def test_blank_bl_config_in_ccfg_warns():
+    image = bytearray(0x100) + bytearray(88)
+    image[0x130:0x134] = b"\xFF" * 4
+    assert _ccfg_tail_device().image_disables_bootloader(image, 0) is True
+
+
+def _declining_prompt(monkeypatch):
+    questions = []
+
+    def decline(question, default):
+        questions.append(question)
+        return False
+
+    monkeypatch.setattr(bsl, "query_yes_no", decline)
+    return questions
+
+
+@pytest.mark.parametrize("options", [
+    ["-e", "-w"],
+    ["-E", "a,0xF00,0x1000", "-w"],
+    ["-f", "-W"],
+])
+def test_partial_ccfg_restore_after_erase_prompts(fake_cli, monkeypatch, tmp_path, options):
+    questions = _declining_prompt(monkeypatch)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0xE0)  # 0xF00-0xFE0 covers only part of CCFG
+    if "-f" in options:
+        # --force skips prompts, so only check the condition is reached
+        fake_cli(*options, "-a", str(0xF00), str(fw))
+        assert "write" in fake_cli.cmd.calls
+        return
+    with pytest.raises(SystemExit) as exc:
+        fake_cli(*options, "-a", str(0xF00), str(fw))
+    assert "Aborted" in str(exc.value.code)
+    assert "CCFG" in questions[0]
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_mass_erase_with_app_only_image_does_not_prompt(fake_cli, monkeypatch, tmp_path):
+    def fail(question, default):
+        raise AssertionError("must not prompt")
+    monkeypatch.setattr(bsl, "query_yes_no", fail)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)
+    fake_cli("-e", "-w", str(fw))
+    assert "write" in fake_cli.cmd.calls
+
+
+def test_closed_input_at_prompt_mentions_force(monkeypatch):
+    def closed():
+        raise EOFError
+    monkeypatch.setattr("builtins.input", closed)
+    with pytest.raises(Exception) as exc:
+        bsl.query_yes_no("Continue?", "no")
+    assert "--force" in str(exc.value)
+
+
+def test_interrupted_reset_warning_has_reason(capsys):
+    class Cmd:
+        def cmdReset(self):
+            raise KeyboardInterrupt
+
+    bsl.reset_target(Cmd())
+    assert "could not reset target: interrupted" in capsys.readouterr().err
