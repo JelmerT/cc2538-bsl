@@ -1520,11 +1520,15 @@ def erase_write_range(device, address, length):
 
     Supported chips have whole pages up to the end of flash, and check_write
     keeps the image inside it. The end is still bounded by the end of flash
-    in case a size is not a whole number of pages.
+    in case a size is not a whole number of pages. Raises CmdException for
+    an empty image or a range that is not inside flash.
     """
+    if length <= 0:
+        raise CmdException("Erase-write of %d bytes at 0x%08X: nothing to "
+                           "write." % (length, address))
     start = device.page_align_down(address)
     end = min(device.page_align_up(address + length), device.flash_end)
-    if length <= 0 or end <= start:
+    if start < device.flash_start_addr or end <= start:
         raise CmdException("Erase-write range 0x%08X-0x%08X is not inside "
                            "flash." % (address, address + length))
     return start, end - start
