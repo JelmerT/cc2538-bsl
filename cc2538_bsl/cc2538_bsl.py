@@ -744,6 +744,17 @@ class Chip:
                              int(page)*self.page_size)
         return addresses
 
+    def ccfg_range(self):
+        """Return the (address, length) of the CCFG area."""
+        return self.bootloader_address, 44
+
+    def image_has_ccfg(self, image, address):
+        """Return True if the image programs any byte of the CCFG area."""
+        ccfg_addr, ccfg_len = self.ccfg_range()
+        start = max(ccfg_addr - address, 0)
+        end = min(ccfg_addr + ccfg_len - address, len(image))
+        return start < end and any(b != 0xFF for b in image[start:end])
+
     def image_disables_bootloader(self, image, address,
                                   erases_bl_config=False):
         """Return True if the image's CCFG would lock out this bootloader."""
@@ -989,17 +1000,18 @@ class CC26xx(Chip):
         # CCFG.BL_CONFIG: BOOTLOADER_ENABLE and BL_ENABLE (backdoor)
         return (word >> 24) == 0xC5 and (word & 0xFF) == 0xC5
 
+    def ccfg_range(self):
+        return self.bootloader_address - 0x30, 88
+
     def image_disables_bootloader(self, image, address,
                                   erases_bl_config=False):
-        # An all-0xFF CCFG region means the image carries no CCFG settings
-        ccfg_offset = self.bootloader_address - 0x30 - address
-        start = max(ccfg_offset, 0)
-        end = min(ccfg_offset + 88, len(image))
-        if start >= end or all(b == 0xFF for b in image[start:end]):
+        if not self.image_has_ccfg(image, address):
             return False
-        # CCFG settings without BL_CONFIG: an erase would leave it disabled
+        # CCFG settings without BL_CONFIG leave the flash word unchanged, so
+        # they only disable the bootloader if an erase wipes that word.
         bl_offset = self.bootloader_address - address
-        if not 0 <= bl_offset <= len(image) - 4:
+        if (not 0 <= bl_offset <= len(image) - 4 or
+                bytes(image[bl_offset:bl_offset + 4]) == b'\xFF' * 4):
             return erases_bl_config
         return super().image_disables_bootloader(image, address)
 
@@ -1082,16 +1094,13 @@ def parse_ieee_address(inaddr):
 
 
 def _parse_range_number(value):
-    """Parse an int, 0x-prefixed hex, decimal, or unprefixed hex with a-f."""
+    """Parse an int, 0x-prefixed hex, or decimal."""
     if isinstance(value, int):
         return value
     text = value.strip().lower()
     if text.startswith('0x'):
         return int(text, 16)
-    try:
-        return int(text, 10)
-    except ValueError:
-        return int(text, 16)
+    return int(text, 10)
 
 
 def _parse_range_values(device, values):
@@ -1149,7 +1158,7 @@ def check_erase_range(device, start, length):
                                               device.flash_end))
 
 
-def check_write_target(device, address, force=False):
+def check_write_target(device, address, force=False, erase_write=False):
     """Reject write addresses the bootloader cannot program as flash."""
     if address % 4:
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
@@ -1157,6 +1166,15 @@ def check_write_target(device, address, force=False):
     if not device.flash_start_addr <= address < device.flash_end:
         message = ("Write address 0x%08X is outside flash (0x%08X-0x%08X)."
                    % (address, device.flash_start_addr, device.flash_end))
+        if erase_write:
+            raise CmdException(message + " Erase-write only works on flash.")
+        if not force:
+            raise CmdException(message + " Use --force to continue anyway.")
+        mdebug(5, "Warning: " + message)
+    if erase_write and address % device.page_size:
+        message = ("Erase-write address 0x%08X is not aligned to a %d byte "
+                   "page, so the data before it in that page would be erased."
+                   % (address, device.page_size))
         if not force:
             raise CmdException(message + " Use --force to continue anyway.")
         mdebug(5, "Warning: " + message)
@@ -1217,7 +1235,7 @@ def reset_target(cmd):
     """Leave the bootloader without hiding the error being reported."""
     try:
         cmd.cmdReset()
-    except Exception as err:
+    except (Exception, KeyboardInterrupt) as err:
         mdebug(5, "Warning: could not reset target: %s" % err)
 
 
@@ -1270,7 +1288,7 @@ def cli_setup():
     parser.add_argument('-V', action='store_true', help='Verbose')
     parser.add_argument('-f', '--force', action='store_true', help='Force operation(s) without asking any questions')
     parser.add_argument('-e', '--erase', action='store_true', help='Mass erase')
-    parser.add_argument('-E', '--erase-page', help='Receives an absolute address(a) range or page(p) range, default is address(a) eg: -E p,1,4, -E a,0x00001000,0x00003000 (CC2538 flash starts at 0x00200000)')
+    parser.add_argument('-E', '--erase-page', help='Receives an absolute address(a) range or page(p) range, default is address(a) eg: -E p,1,4, -E a,0x00001000,0x00003000 (CC2538 flash starts at 0x00200000). Addresses are decimal unless prefixed with 0x')
     parser.add_argument('-w', '--write', action='store_true', help='Write')
     parser.add_argument('-W', '--erase-write', action='store_true', help='Write after erasing section to write to (avoids a mass erase). Rounds up section to erase if not page aligned.')
     parser.add_argument('-v', '--verify', action='store_true', help='Verify (CRC32 check)')
@@ -1443,8 +1461,8 @@ def main_cli():
             check_erase_range(device, erase_range[0], erase_range[1])
             erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
-            check_write_target(device, args.address,
-                               args.force and not args.erase_write)
+            check_write_target(device, args.address, args.force,
+                               args.erase_write)
             check_flash_bounds(device, args.address, len(firmware.bytes),
                                "Write", args.force)
         if args.erase_write:
@@ -1466,6 +1484,17 @@ def main_cli():
                                           "target using this tool if you "
                                           "continue! Do you want to continue?",
                                           "no"))):
+                raise Exception('Aborted by user.')
+        if args.erase_write:
+            ccfg_addr, ccfg_len = device.ccfg_range()
+            if (erase_start < ccfg_addr + ccfg_len and ccfg_addr < erase_end
+                    and not device.image_has_ccfg(firmware.bytes, args.address)
+                    and not (args.force or
+                             query_yes_no("This erase includes the CCFG area "
+                                          "and the image does not restore it. "
+                                          "The firmware will not boot until "
+                                          "CCFG is written. Do you want to "
+                                          "continue?", "no"))):
                 raise Exception('Aborted by user.')
         if args.disable_bootloader:
             device.confirm_disable_bootloader(args.force)

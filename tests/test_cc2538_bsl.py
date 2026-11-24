@@ -465,7 +465,7 @@ def test_write_memory_checks_final_download_that_starts_transfer(monkeypatch):
 def test_erase_write_covers_every_page(fake_cli, tmp_path):
     fw = tmp_path / "fw.bin"
     fw.write_bytes(b"\x01" * 0x100)
-    fake_cli("-W", "-a", str(0x180), str(fw))
+    fake_cli("-f", "-W", "-a", str(0x180), str(fw))
     assert fake_cli.cmd.erase_args == (0x100, 0x200)
 
 
@@ -1032,7 +1032,7 @@ def test_app_image_before_ccfg_does_not_warn_on_mass_erase():
 
 @pytest.mark.parametrize("options, covered", [
     (["-w", "-a", str(0xFDC)], False),
-    (["-W", "-a", str(0xFDC)], True),
+    (["-f", "-W", "-a", str(0xFDC)], True),
     (["-e", "-w", "-a", str(0xFDC)], True),
     (["-E", "a,0xF00,0x1000", "-w", "-a", str(0xFDC)], True),
     (["-E", "a,0x100,0x200", "-w", "-a", str(0xFDC)], False),
@@ -1049,3 +1049,63 @@ def test_cli_reports_erased_bl_config(fake_cli, monkeypatch, tmp_path, options, 
     fw.write_bytes(b"\x01" * 8)
     fake_cli(*options, str(fw))
     assert seen == [covered]
+
+
+def test_unaligned_erase_write_rejected_before_erase(fake_cli, tmp_path):
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-W", "-a", str(0x180), str(fw))
+    assert "not aligned" in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_forced_erase_write_outside_flash_has_no_force_hint(fake_cli, tmp_path):
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-f", "-W", "-a", str(0x2000), str(fw))
+    assert "--force" not in str(exc.value.code)
+
+
+def test_blank_bl_config_only_matters_when_erased():
+    device = _ccfg_tail_device()
+    image = bytearray(0x100) + bytearray(88)
+    image[0x130:0x134] = b"\xFF" * 4
+    assert device.image_disables_bootloader(image, 0, False) is False
+    assert device.image_disables_bootloader(image, 0, True) is True
+
+
+def test_erase_write_wiping_ccfg_prompts(fake_cli, monkeypatch, tmp_path):
+    monkeypatch.setattr(bsl, "query_yes_no", lambda question, default: False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-W", "-a", str(0xF00), str(fw))
+    assert "Aborted" in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_erase_write_restoring_ccfg_does_not_prompt(fake_cli, monkeypatch, tmp_path):
+    def fail(question, default):
+        raise AssertionError("must not prompt")
+    monkeypatch.setattr(bsl, "query_yes_no", fail)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)
+    fake_cli("-W", "-a", str(0xF00), str(fw))
+    assert "write" in fake_cli.cmd.calls
+
+
+@pytest.mark.parametrize("value", ["a,a00", "a,0020a000"])
+def test_unprefixed_hex_erase_address_rejected(fake_cli, value):
+    with pytest.raises(SystemExit):
+        fake_cli("-E", value)
+    assert "erase_range" not in fake_cli.cmd.calls
+
+
+def test_interrupt_during_reset_is_contained():
+    class Cmd:
+        def cmdReset(self):
+            raise KeyboardInterrupt
+
+    bsl.reset_target(Cmd())
