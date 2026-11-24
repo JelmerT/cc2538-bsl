@@ -238,6 +238,7 @@ class _FakeDevice(bsl.Chip):
         self.has_cmd_set_xosc = False
         self.page_size = 0x100
         self.bootloader_address = 0x1000 - 40
+        self.bootloader_dis_val = 0
 
     def _bootloader_enabled(self, word):
         return word != 0
@@ -722,7 +723,8 @@ def test_read_preflight_leaves_no_file_on_failed_read(fake_cli, monkeypatch, tmp
     assert fake_cli.cmd.calls == ["open", "reset"]
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="needs POSIX directory modes as non-root")
 def test_writable_output_in_readonly_directory(fake_cli, tmp_path):
     directory = tmp_path / "ro"
     directory.mkdir()
@@ -889,3 +891,134 @@ def test_failed_final_reset_is_not_retried(fake_cli, monkeypatch):
         fake_cli("-e")
     assert "reset failed" in str(exc.value.code)
     assert len(resets) == 1
+
+
+def _crc_mismatch(monkeypatch):
+    monkeypatch.setattr(_FakeDevice, "crc", lambda self, addr, size: 0,
+                        raising=False)
+
+
+def test_crc_mismatch_after_write_stays_in_bootloader(fake_cli, monkeypatch, tmp_path):
+    _crc_mismatch(monkeypatch)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-w", "-v", str(fw))
+    assert "NO CRC32 match" in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "write"]
+
+
+def test_crc_mismatch_without_write_resets(fake_cli, monkeypatch, tmp_path):
+    _crc_mismatch(monkeypatch)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit):
+        fake_cli("-v", str(fw))
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_declined_disable_bootloader_resets_before_erase(fake_cli, monkeypatch):
+    monkeypatch.setattr(bsl, "query_yes_no", lambda question, default: False)
+    with pytest.raises(SystemExit):
+        fake_cli("-e", "-D")
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_disable_bootloader_prompts_once(fake_cli, monkeypatch):
+    questions = []
+    monkeypatch.setattr(bsl, "query_yes_no",
+                        lambda question, default: questions.append(question) or True)
+    fake_cli("-D")
+    assert len(questions) == 1
+    assert fake_cli.cmd.calls == ["open", "write", "reset"]
+
+
+def test_failed_read_with_pending_disable_resets(fake_cli, monkeypatch, tmp_path):
+    def fail(self, addr):
+        raise bsl.CmdException("Read failed")
+    monkeypatch.setattr(_FakeDevice, "read_memory", fail)
+    with pytest.raises(SystemExit):
+        fake_cli("-D", "-f", "-r", "-l", "16", str(tmp_path / "out.bin"))
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_failed_verify_with_pending_ieee_resets(fake_cli, monkeypatch, tmp_path):
+    monkeypatch.setattr(_FakeDevice, "crc", lambda self, addr, size: None,
+                        raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit):
+        fake_cli("-i", "00:12:4B:00:00:00:00:01", "-v", str(fw))
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_full_disk_keeps_existing_output(monkeypatch, tmp_path):
+    out = tmp_path / "out.bin"
+    out.write_bytes(b"keep")
+
+    def no_space(fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(bsl.os, "fsync", no_space)
+    with pytest.raises(OSError):
+        bsl.save_read_output(str(out), b"new data")
+    assert out.read_bytes() == b"keep"
+    assert [p.name for p in tmp_path.iterdir()] == ["out.bin"]
+
+
+def test_failed_in_place_save_keeps_recovery_copy(monkeypatch, tmp_path):
+    out = tmp_path / "out.bin"
+    out.write_bytes(b"keep")
+
+    def fail(path, data):
+        raise OSError(5, "I/O error")
+
+    monkeypatch.setattr(bsl, "_write_synced", fail)
+    with pytest.raises(Exception) as exc:
+        bsl.save_read_output(str(out), b"new data")
+    recovery = [p for p in tmp_path.iterdir() if p.name != "out.bin"]
+    assert len(recovery) == 1
+    assert recovery[0].read_bytes() == b"new data"
+    assert str(recovery[0]) in str(exc.value)
+
+
+def test_read_to_device_node_stays_a_device(fake_cli):
+    fake_cli("-r", "-l", "16", os.devnull)
+    assert not os.path.isfile(os.devnull)
+
+
+def test_read_through_dangling_symlink(fake_cli, tmp_path):
+    target = tmp_path / "missing.bin"
+    link = tmp_path / "link.bin"
+    link.symlink_to(target)
+    fake_cli("-r", "-l", "16", str(link))
+    assert link.is_symlink()
+    assert target.stat().st_size == 16
+
+
+def test_partial_blank_ccfg_does_not_warn():
+    device = CC26xx.__new__(CC26xx)
+    device.bootloader_address = 0x130
+    image = bytearray(0x100) + bytearray(b"\xFF" * 0x40)
+    assert device.image_disables_bootloader(image, 0) is False
+
+
+def test_zero_length_read_keeps_output(fake_cli, tmp_path):
+    out = tmp_path / "out.bin"
+    out.write_bytes(b"keep")
+    with pytest.raises(SystemExit):
+        fake_cli("-r", "-l", "0", str(out))
+    assert out.read_bytes() == b"keep"
+    assert fake_cli.cmd.calls == []
+
+
+@pytest.mark.parametrize("addr, prompted", [(0x00200000, True), (0, False)])
+def test_write_memory_guard_only_for_cc2538_image(monkeypatch, addr, prompted):
+    ci, _ = _packet_interface(monkeypatch, None)
+    questions = []
+    monkeypatch.setattr(bsl, "query_yes_no",
+                        lambda question, default: questions.append(question) or True)
+    image = bytearray(b"\x01" * 524288)
+    image[524247] = 0xEF
+    assert ci.writeMemory(addr, image)
+    assert bool(questions) is prompted

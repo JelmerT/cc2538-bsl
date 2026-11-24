@@ -47,7 +47,9 @@ import struct
 import binascii
 import traceback
 import argparse
+import errno
 import subprocess
+import tempfile
 
 # version
 __version__ = "2.1"
@@ -662,10 +664,9 @@ class CommandInterface:
         trsf_size = 248
         empty_packet = bytearray((0xFF,) * trsf_size)
 
-        # Boot loader enable check
-        # TODO: implement check for all chip sizes & take into account partial
-        # firmware uploads
-        if (lng == 524288):  # check if file is for 512K model
+        # Boot loader enable check for a full CC2538 512K image. The CLI uses
+        # the size-aware Chip.image_disables_bootloader before erasing.
+        if lng == 524288 and addr == 0x00200000:
             # check the boot loader enable bit  (only for 512K model)
             if not ((data[524247] & (1 << 4)) >> 4):
                 if not (force or
@@ -756,13 +757,16 @@ class Chip:
     def crc(self, address, size):
         return getattr(self.command_interface, self.crc_cmd)(address, size)
 
-    def disable_bootloader(self, force=False):
+    def confirm_disable_bootloader(self, force=False):
         if not (force or
                 query_yes_no("Disabling the bootloader will prevent you from "
                              "using this script until you re-enable the "
                              "bootloader using JTAG. Do you want to continue?",
                              "no")):
             raise Exception('Aborted by user.')
+
+    def disable_bootloader(self, force=False):
+        self.confirm_disable_bootloader(force)
 
         pattern = struct.pack('<L', self.bootloader_dis_val)
 
@@ -989,10 +993,10 @@ class CC26xx(Chip):
     def image_disables_bootloader(self, image, address):
         # An all-0xFF CCFG region means the image carries no CCFG settings
         ccfg_offset = self.bootloader_address - 0x30 - address
-        if ccfg_offset >= 0:
-            ccfg = image[ccfg_offset:ccfg_offset + 88]
-            if len(ccfg) == 88 and all(b == 0xFF for b in ccfg):
-                return False
+        start = max(ccfg_offset, 0)
+        end = min(ccfg_offset + 88, len(image))
+        if start < end and all(b == 0xFF for b in image[start:end]):
+            return False
         return super().image_disables_bootloader(image, address)
 
     def erase(self):
@@ -1182,6 +1186,7 @@ def get_read_length(device, address, requested, force=False):
 
 def check_output_path(path):
     """Fail before any device access if the read output cannot be saved."""
+    path = os.path.realpath(path)
     if os.path.isdir(path):
         raise Exception('Output path %s is a directory.' % path)
     if os.path.exists(path):
@@ -1195,6 +1200,50 @@ def check_output_path(path):
         os.unlink(path)
     except OSError as err:
         raise Exception('Cannot write output file %s: %s' % (path, err))
+
+
+def _write_synced(path, data):
+    with open(path, 'wb') as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def save_read_output(path, data):
+    """Save a dump in place, keeping a temp copy until the save succeeds.
+
+    Writing in place keeps the file's owner, links, and type. The temp copy
+    means a full disk fails before the existing file is touched.
+    """
+    path = os.path.realpath(path)
+    if os.path.exists(path) and not os.path.isfile(path):
+        _write_synced(path, data)  # device node or FIFO
+        return
+
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path),
+                                        prefix='.cc2538-bsl-')
+    except OSError as err:
+        if err.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+            raise
+        _write_synced(path, data)  # no temp file possible in this directory
+        return
+
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+
+    try:
+        _write_synced(path, data)
+    except Exception as err:
+        raise Exception('Could not save %s: %s. The data read is in %s.'
+                        % (path, err, tmp_path))
+    os.unlink(tmp_path)
 
 
 def reset_target(cmd):
@@ -1327,7 +1376,7 @@ def main_cli():
             and args.verify):
             raise Exception('Verify after read not implemented.')
 
-        if args.len is not None and args.len < 0:
+        if args.len is not None and args.len <= 0:
             raise Exception('Length must be positive but %d was provided'
                             % (args.len,))
 
@@ -1443,16 +1492,14 @@ def main_cli():
             erase_end = min(device.page_align_up(args.address +
                                                  len(firmware.bytes)),
                             device.flash_end)
+        if args.disable_bootloader:
+            device.confirm_disable_bootloader(args.force)
         if args.read:
             read_length = get_read_length(device, args.address, args.len,
                                           args.force)
 
-        if (args.erase or args.erase_page is not None or args.write
-                or args.erase_write or ieee_addr is not None
-                or args.disable_bootloader):
-            reset_on_failure = False
-
         if args.erase:
+            reset_on_failure = False
             mdebug(5, "    Performing mass erase")
             if device.erase():
                 mdebug(5, "    Erase done")
@@ -1460,6 +1507,7 @@ def main_cli():
                 raise CmdException("Erase failed")
 
         if args.erase_page is not None:
+            reset_on_failure = False
             mdebug(5, "    Performing partial erase")
             if device.eraseRange(erase_range[0], erase_range[1]):
                 mdebug(5, "    Partial erase done                  ")
@@ -1467,6 +1515,7 @@ def main_cli():
                 raise CmdException("Partial erase failed")
 
         if args.write:
+            reset_on_failure = False
             # TODO: check if boot loader back-door is open, need to read
             #       flash size first to get address
             if cmd.writeMemory(args.address, firmware.bytes, True):
@@ -1475,6 +1524,7 @@ def main_cli():
                 raise CmdException("Write failed                       ")
 
         if args.erase_write:
+            reset_on_failure = False
             # TODO: check if boot loader back-door is open, need to read
             #       flash size first to get address
             if device.eraseRange(erase_start, erase_end - erase_start):
@@ -1499,12 +1549,11 @@ def main_cli():
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
             else:
-                reset_on_failure = False
-                reset_target(cmd)
                 raise Exception("NO CRC32 match: Local = 0x%x, "
                                 "Target = 0x%x" % (crc_local, crc_target))
 
         if ieee_addr is not None:
+            reset_on_failure = False
             mdebug(5, "Setting IEEE address to %s"
                        % (':'.join(['%02x' % b
                                     for b in struct.pack('>Q', ieee_addr)])))
@@ -1532,12 +1581,12 @@ def main_cli():
                        % (args.address + (i * 4), rdata[0], rdata[1],
                           rdata[2], rdata[3]), '\r')
                 read_data += rdata
-            with open(args.file, 'wb') as f:
-                f.write(read_data)
+            save_read_output(args.file, read_data)
             mdebug(5, "    Read done                                ")
 
         if args.disable_bootloader:
-            device.disable_bootloader(args.force)
+            reset_on_failure = False
+            device.disable_bootloader(True)  # confirmed before any erase
 
         reset_on_failure = False
         cmd.cmdReset()
