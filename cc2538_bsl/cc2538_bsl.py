@@ -48,7 +48,6 @@ import binascii
 import traceback
 import argparse
 import subprocess
-import tempfile
 
 # version
 __version__ = "2.1"
@@ -657,11 +656,26 @@ class CommandInterface:
 
 # Complex commands section
 
-    def writeMemory(self, addr, data):
+    def writeMemory(self, addr, data, force=False):
         lng = len(data)
         # amount of data bytes transferred per packet (theory: max 252 + 3)
         trsf_size = 248
         empty_packet = bytearray((0xFF,) * trsf_size)
+
+        # Boot loader enable check
+        # TODO: implement check for all chip sizes & take into account partial
+        # firmware uploads
+        if (lng == 524288):  # check if file is for 512K model
+            # check the boot loader enable bit  (only for 512K model)
+            if not ((data[524247] & (1 << 4)) >> 4):
+                if not (force or
+                        query_yes_no("The boot loader backdoor is not enabled "
+                                     "in the firmware you are about to write "
+                                     "to the target. You will NOT be able to "
+                                     "reprogram the target using this tool if "
+                                     "you continue! "
+                                     "Do you want to continue?", "no")):
+                    raise Exception('Aborted by user.')
 
         mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)08X" %
                {'lng': lng, 'addr': addr})
@@ -969,8 +983,17 @@ class CC26xx(Chip):
         return "%s %s" % (chip_str, pg_str)
 
     def _bootloader_enabled(self, word):
-        # CCFG.BL_CONFIG.BOOTLOADER_ENABLE
-        return (word >> 24) == 0xC5
+        # CCFG.BL_CONFIG: BOOTLOADER_ENABLE and BL_ENABLE (backdoor)
+        return (word >> 24) == 0xC5 and (word & 0xFF) == 0xC5
+
+    def image_disables_bootloader(self, image, address):
+        # An all-0xFF CCFG region means the image carries no CCFG settings
+        ccfg_offset = self.bootloader_address - 0x30 - address
+        if ccfg_offset >= 0:
+            ccfg = image[ccfg_offset:ccfg_offset + 88]
+            if len(ccfg) == 88 and all(b == 0xFF for b in ccfg):
+                return False
+        return super().image_disables_bootloader(image, address)
 
     def erase(self):
         mdebug(5, "Erasing all main bank flash sectors")
@@ -1159,42 +1182,19 @@ def get_read_length(device, address, requested, force=False):
 
 def check_output_path(path):
     """Fail before any device access if the read output cannot be saved."""
-    path = os.path.realpath(path)
     if os.path.isdir(path):
         raise Exception('Output path %s is a directory.' % path)
-    if os.path.exists(path) and not os.access(path, os.W_OK):
-        raise Exception('Output file %s is not writable.' % path)
+    if os.path.exists(path):
+        if not os.access(path, os.W_OK):
+            raise Exception('Output file %s is not writable.' % path)
+        return
     try:
-        with tempfile.TemporaryFile(dir=os.path.dirname(path)):
+        # Exercise the real name and location, without touching existing data
+        with open(path, 'xb'):
             pass
+        os.unlink(path)
     except OSError as err:
         raise Exception('Cannot write output file %s: %s' % (path, err))
-
-
-def write_file_atomic(path, data):
-    """Replace path with data only once data is safely on disk."""
-    path = os.path.realpath(path)
-    directory, name = os.path.split(path)
-    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.%s.' % name)
-    try:
-        with os.fdopen(fd, 'wb') as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            mode = os.stat(path).st_mode & 0o7777
-        except FileNotFoundError:
-            umask = os.umask(0)
-            os.umask(umask)
-            mode = 0o666 & ~umask
-        os.chmod(tmp_path, mode)
-        os.replace(tmp_path, path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
 
 
 def reset_target(cmd):
@@ -1272,6 +1272,8 @@ def cli_setup():
     parser.add_argument('file', nargs='?', default=None, help='Firmware file to write or verify, or output file for read')
 
     args = parser.parse_args()
+    if args.port == '':
+        parser.error('the serial port given with -p is empty')
     if args.file is None and (args.write or args.erase_write or args.verify
                               or args.read):
         parser.error('a file is required with -w, -W, -v or -r')
@@ -1303,8 +1305,9 @@ def main_cli():
     elif args.q:
         QUIET = 0
 
-    # Set once the target has answered in its bootloader
-    bootloader_active = False
+    # Reset on failure only while flash is unchanged. After a failed erase or
+    # write the target stays in its bootloader so the operation can be retried.
+    reset_on_failure = False
 
     try:
         if (args.write and args.read) or (args.erase_write and args.read):
@@ -1379,7 +1382,7 @@ def main_cli():
         if not cmd.sendSynch():
             raise CmdException("Can't connect to target. Ensure boot loader "
                                "is started. (no answer on synch sequence)")
-        bootloader_active = True
+        reset_on_failure = True
 
         # if (cmd.cmdPing() != 1):
         #     raise CmdException("Can't connect to target. Ensure boot loader "
@@ -1444,6 +1447,11 @@ def main_cli():
             read_length = get_read_length(device, args.address, args.len,
                                           args.force)
 
+        if (args.erase or args.erase_page is not None or args.write
+                or args.erase_write or ieee_addr is not None
+                or args.disable_bootloader):
+            reset_on_failure = False
+
         if args.erase:
             mdebug(5, "    Performing mass erase")
             if device.erase():
@@ -1461,7 +1469,7 @@ def main_cli():
         if args.write:
             # TODO: check if boot loader back-door is open, need to read
             #       flash size first to get address
-            if cmd.writeMemory(args.address, firmware.bytes):
+            if cmd.writeMemory(args.address, firmware.bytes, True):
                 mdebug(5, "    Write done                                ")
             else:
                 raise CmdException("Write failed                       ")
@@ -1473,7 +1481,7 @@ def main_cli():
                 mdebug(5, "    Erase before write done                 ")
             else:
                 raise CmdException("Erase before write failed")
-            if cmd.writeMemory(args.address, firmware.bytes):
+            if cmd.writeMemory(args.address, firmware.bytes, True):
                 mdebug(5, "    Write done                              ")
             else:
                 raise CmdException("Write failed                       ")
@@ -1491,6 +1499,8 @@ def main_cli():
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
             else:
+                reset_on_failure = False
+                reset_target(cmd)
                 raise Exception("NO CRC32 match: Local = 0x%x, "
                                 "Target = 0x%x" % (crc_local, crc_target))
 
@@ -1522,19 +1532,24 @@ def main_cli():
                        % (args.address + (i * 4), rdata[0], rdata[1],
                           rdata[2], rdata[3]), '\r')
                 read_data += rdata
-            write_file_atomic(args.file, read_data)
+            with open(args.file, 'wb') as f:
+                f.write(read_data)
             mdebug(5, "    Read done                                ")
 
         if args.disable_bootloader:
             device.disable_bootloader(args.force)
 
-        bootloader_active = False
+        reset_on_failure = False
         cmd.cmdReset()
 
+    except KeyboardInterrupt:
+        if reset_on_failure:
+            reset_target(cmd)
+        exit('ERROR: Interrupted by user.')
     except Exception as err:
         if QUIET >= 10:
             traceback.print_exc()
-        if bootloader_active:
+        if reset_on_failure:
             reset_target(cmd)
         exit('ERROR: %s' % str(err))
 

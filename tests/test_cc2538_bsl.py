@@ -219,7 +219,7 @@ class _FakeCmd:
     def cmdGetChipId(self):
         return 0xFFFF
 
-    def writeMemory(self, addr, data):
+    def writeMemory(self, addr, data, force=False):
         self.calls.append("write")
         self.write_addr = addr
         return 1
@@ -704,16 +704,45 @@ def test_read_output_location_checked_before_device(fake_cli, tmp_path):
     assert fake_cli.cmd.calls == []
 
 
-def test_failed_save_keeps_existing_output(fake_cli, monkeypatch, tmp_path):
-    def fail(src, dst):
-        raise OSError("disk full")
-    monkeypatch.setattr(bsl.os, "replace", fail)
+def test_read_output_name_checked_before_device(fake_cli, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-r", str(tmp_path / ("x" * 300)))
+    assert "Cannot write output file" in str(exc.value.code)
+    assert fake_cli.cmd.calls == []
+
+
+def test_read_preflight_leaves_no_file_on_failed_read(fake_cli, monkeypatch, tmp_path):
+    def fail(self, addr):
+        raise bsl.CmdException("Read failed")
+    monkeypatch.setattr(_FakeDevice, "read_memory", fail)
     out = tmp_path / "out.bin"
-    out.write_bytes(b"keep")
     with pytest.raises(SystemExit):
         fake_cli("-r", "-l", "16", str(out))
-    assert out.read_bytes() == b"keep"
-    assert [p.name for p in tmp_path.iterdir()] == ["out.bin"]
+    assert not out.exists()
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_writable_output_in_readonly_directory(fake_cli, tmp_path):
+    directory = tmp_path / "ro"
+    directory.mkdir()
+    out = directory / "out.bin"
+    out.write_bytes(b"old")
+    directory.chmod(0o555)
+    try:
+        fake_cli("-r", "-l", "16", str(out))
+        assert out.stat().st_size == 16
+    finally:
+        directory.chmod(0o755)
+
+
+def test_read_output_keeps_hard_links(fake_cli, tmp_path):
+    out = tmp_path / "out.bin"
+    out.write_bytes(b"old")
+    link = tmp_path / "link.bin"
+    os.link(str(out), str(link))
+    fake_cli("-r", "-l", "16", str(out))
+    assert link.stat().st_size == 16
 
 
 def test_read_output_keeps_mode_and_symlink(fake_cli, tmp_path):
@@ -759,12 +788,20 @@ def test_force_skips_backdoor_warning(fake_cli, monkeypatch, tmp_path):
     (CC2538, 0xEFFFFFFF, True),
     (CC26xx, 0xC5FE0AC5, False),
     (CC26xx, 0x00000000, True),
+    (CC26xx, 0xC5FFFFFF, True),
 ])
 def test_image_disables_bootloader(cls, word, disabled):
     device = cls.__new__(cls)
     device.bootloader_address = 0x100
     image = bytearray(0x100) + bytearray(word.to_bytes(4, "little"))
     assert device.image_disables_bootloader(image, 0) is disabled
+
+
+def test_erased_cc26xx_ccfg_does_not_warn():
+    device = CC26xx.__new__(CC26xx)
+    device.bootloader_address = 0x130
+    assert device.image_disables_bootloader(
+        bytearray(0x100) + bytearray(b"\xFF" * 88), 0) is False
 
 
 def test_image_without_ccfg_does_not_warn():
@@ -792,13 +829,52 @@ def test_failed_crc_command_is_reported(fake_cli, monkeypatch, tmp_path):
     assert fake_cli.cmd.calls[-1] == "reset"
 
 
-def test_operation_failure_resets_target(fake_cli, monkeypatch, tmp_path):
-    monkeypatch.setattr(_FakeCmd, "writeMemory", lambda self, addr, data: 0)
+def test_failed_write_stays_in_bootloader(fake_cli, monkeypatch, tmp_path):
+    monkeypatch.setattr(_FakeCmd, "writeMemory",
+                        lambda self, addr, data, force=False: 0)
     fw = tmp_path / "fw.bin"
     fw.write_bytes(b"\x01" * 16)
     with pytest.raises(SystemExit):
         fake_cli("-w", str(fw))
+    assert fake_cli.cmd.calls == ["open"]
+
+
+def test_interrupt_before_flash_change_resets_target(fake_cli, monkeypatch, tmp_path):
+    def interrupt(question, default):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(bsl, "query_yes_no", interrupt)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(_locked_image())
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-e", "-w", str(fw))
+    assert "Interrupted" in str(exc.value.code)
     assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_interrupt_during_write_stays_in_bootloader(fake_cli, monkeypatch, tmp_path):
+    def interrupt(self, addr, data, force=False):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(_FakeCmd, "writeMemory", interrupt)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit):
+        fake_cli("-w", str(fw))
+    assert fake_cli.cmd.calls == ["open"]
+
+
+def test_empty_port_rejected_for_destructive_operation(monkeypatch):
+    cmd = _FakeCmd()
+    monkeypatch.setattr(bsl, "CommandInterface", lambda: cmd)
+    monkeypatch.setattr(sys, "argv", ["cc2538-bsl", "-p", "", "-e"])
+    with pytest.raises(SystemExit) as exc:
+        bsl.main_cli()
+    assert exc.value.code == 2
+    assert cmd.calls == []
+
+
+def test_write_memory_keeps_force_parameter(monkeypatch):
+    ci, calls = _packet_interface(monkeypatch, None)
+    assert ci.writeMemory(0, bytearray(b"\x01" * 8), force=True)
 
 
 def test_failed_final_reset_is_not_retried(fake_cli, monkeypatch):
