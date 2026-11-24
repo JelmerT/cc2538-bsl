@@ -1910,9 +1910,10 @@ def test_erase_write_range(size, address, length, expected, start):
 
 
 @pytest.mark.parametrize("address, length, message", [
-    (0x1100, 0x10, "not inside flash"),   # past the end
-    (0x1000, 0x10, "not inside flash"),   # at the end
-    (-0x80, 0x100, "not inside flash"),   # starts below flash
+    (0x1100, 0x10, "does not fit inside flash"),   # past the end
+    (0x1000, 0x10, "does not fit inside flash"),   # at the end
+    (0xF00, 0x200, "does not fit inside flash"),   # runs past the end
+    (-0x80, 0x100, "does not fit inside flash"),   # starts below flash
     (0x100, 0, "nothing to write"),
 ])
 @pytest.mark.parametrize("start", [0, 0x200000])
@@ -1922,3 +1923,9 @@ def test_erase_write_range_refuses(address, length, message, start):
     with pytest.raises(bsl.CmdException) as exc:
         bsl.erase_write_range(device, start + address, length)
     assert message in str(exc.value)
+
+
+def test_erase_write_range_bounded_by_unaligned_flash_start():
+    device = _FakeDevice(_FakeCmd())
+    device.flash_start_addr = 0x80
+    assert bsl.erase_write_range(device, 0x80, 0x10) == (0x80, 0x80)
