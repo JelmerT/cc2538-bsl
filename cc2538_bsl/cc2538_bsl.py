@@ -1830,11 +1830,12 @@ def main_cli():
                         force=args.force, erase_write=args.erase_write)
         write_erase = None
         if args.erase_write:
-            # Cover every page the image touches. check_write keeps this
-            # inside flash.
+            # Cover every page the image touches. check_write keeps the
+            # image inside flash; the clamp covers a last partial page.
             erase_start = device.page_align_down(args.address)
-            erase_end = device.page_align_up(args.address +
-                                             len(firmware.bytes))
+            erase_end = min(device.page_align_up(args.address +
+                                                 len(firmware.bytes)),
+                            device.flash_end)
             write_erase = (erase_start, erase_end - erase_start)
         check_ccfg = not (args.force or args.skip_ccfg_check)
         if check_ccfg and not device.ccfg_known:
