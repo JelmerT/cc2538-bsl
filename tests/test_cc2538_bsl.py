@@ -1830,8 +1830,50 @@ def test_check_write_guessed_end(address, length, force, refused):
     device.page_size = 0x800
     if refused:
         with pytest.raises(bsl.CmdException) as exc:
-            bsl.check_write(device, address, length, force)
+            bsl.check_write(device, address, length, force=force)
         assert "which is a guess" in str(exc.value)
         assert "--force" not in str(exc.value)
     else:
-        bsl.check_write(device, address, length, force)
+        bsl.check_write(device, address, length, force=force)
+
+
+def _known_flash_device():
+    device = _FakeDevice(_FakeCmd())  # flash 0x0000-0x1000, 256 byte pages
+    device.max_flash_size = None
+    return device
+
+
+def test_check_write_alignment_first():
+    device = CC2538.__new__(CC2538)
+    device.flash_start_addr = 0x00200000
+    device.size = 0x10000
+    device.size_known = False
+    device.size_code = 0
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.check_write(device, 0x0020FFFE, 0x100, force=True)
+    assert "not 4-byte aligned" in str(exc.value)
+
+
+def test_check_write_passes_erase_write_page_check():
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.check_write(_known_flash_device(), 0x104, 4, erase_write=True)
+    assert "not aligned to a 256 byte page" in str(exc.value)
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_check_write_erase_write_past_flash_end_refused(force):
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.check_write(_known_flash_device(), 0xF00, 0x200, force=force,
+                        erase_write=True)
+    assert "cannot be erased" in str(exc.value)
+
+
+def test_check_write_skips_guess_without_max_flash_size():
+    device = _known_flash_device()
+    device.size_known = False
+    bsl.check_write(device, 0xF00, 0x200, force=True)
+
+
+def test_check_write_flags_are_keyword_only():
+    with pytest.raises(TypeError):
+        bsl.check_write(_known_flash_device(), 0, 4, True)

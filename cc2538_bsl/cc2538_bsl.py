@@ -1494,7 +1494,7 @@ def check_guessed_flash_end(device, address, length):
                               guessed_size_note(device)))
 
 
-def check_write(device, address, length, force=False, erase_write=False):
+def check_write(device, address, length, *, force=False, erase_write=False):
     """Run every check on a write before anything is sent.
 
     Alignment and the guessed end of flash come first, so the later errors
@@ -1504,11 +1504,17 @@ def check_write(device, address, length, force=False, erase_write=False):
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
                            % address)
     check_guessed_flash_end(device, address, length)
-    check_write_target(device, address, force, erase_write)
+    _check_write_target(device, address, force, erase_write)
+    if erase_write and address + length > device.flash_end:
+        # The page erase stops at the end of flash, so the rest would be
+        # written over old data
+        raise CmdException("Erase-write of %d bytes at 0x%08X runs past the "
+                           "end of flash (0x%08X), which cannot be erased."
+                           % (length, address, device.flash_end))
     check_flash_bounds(device, address, length, "Write", force)
 
 
-def check_write_target(device, address, force=False, erase_write=False):
+def _check_write_target(device, address, force, erase_write):
     """Reject write addresses the bootloader cannot program as flash.
 
     Part of check_write, which also checks alignment and length.
@@ -1787,7 +1793,7 @@ def main_cli():
         size_warning = device.size_warning()
         if size_warning:
             # Printed even with -q: reads without -l stop at this size
-            print(size_warning + " Writes that reach past it are refused.",
+            print(size_warning + " Writes into flash past it are refused.",
                   file=sys.stderr)
 
         # Choose a good default address unless the user specified -a
@@ -1820,7 +1826,7 @@ def main_cli():
             erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
             check_write(device, args.address, len(firmware.bytes),
-                        args.force, args.erase_write)
+                        force=args.force, erase_write=args.erase_write)
         write_erase = None
         if args.erase_write:
             # Cover every page the image touches
