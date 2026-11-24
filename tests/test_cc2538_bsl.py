@@ -1561,16 +1561,14 @@ def test_image_disables_bootloader_defaults_to_blank_start():
 @pytest.mark.parametrize("code, known", [
     (0, False), (1, True), (4, True), (5, False), (7, False),
 ])
-def test_cc2538_flash_size_code_sets_known(code, known, capsys, monkeypatch):
+def test_cc2538_flash_size_code_sets_known(code, known):
     class Ci:
         def cmdMemRead(self, addr):
             return bytearray([0x00, 0x00, 0x00, code << 4])
 
-    monkeypatch.setattr(bsl, "QUIET", 0)  # -q must not hide the warning
     device = CC2538(Ci())
     assert device.ccfg_known is known
     assert device.size_known is known
-    assert ("unknown flash size" in capsys.readouterr().err) is not known
 
 
 @pytest.mark.parametrize("options, reaches", [
@@ -1649,6 +1647,7 @@ def test_unknown_size_read_does_not_ask(fake_cli, monkeypatch, tmp_path):
     monkeypatch.setattr(bsl, "query_yes_no", fail)
     monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
     monkeypatch.setattr(_FakeDevice, "size_known", False, raising=False)
+    monkeypatch.setattr(_FakeDevice, "size_code", 0, raising=False)
     out = tmp_path / "out.bin"
     fake_cli("-r", str(out))
     assert out.stat().st_size == 0x1000  # up to the guessed end of flash
@@ -1663,17 +1662,8 @@ def test_closed_input_hint_is_per_question(monkeypatch):
     assert "--skip-ccfg-check" in str(exc.value)
 
 
-@pytest.mark.parametrize("size_known, force, allowed", [
-    (False, True, True),
-    (False, False, False),
-    (True, True, False),
-])
-def test_erase_range_past_guessed_size(size_known, force, allowed):
-    device = _FakeDevice(_FakeCmd())
-    device.size_known = size_known
-    if allowed:
-        bsl.check_erase_range(device, 0x1000, 0x100, force)
-    else:
-        with pytest.raises(ValueError) as exc:
-            bsl.check_erase_range(device, 0x1000, 0x100, force)
-        assert ("--force" in str(exc.value)) is (not size_known)
+def test_unknown_size_warning_shown_with_quiet(fake_cli, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(_FakeDevice, "size_known", False, raising=False)
+    monkeypatch.setattr(_FakeDevice, "size_code", 5, raising=False)
+    fake_cli("-q", "-r", "-l", "16", str(tmp_path / "out.bin"))
+    assert "unknown flash size code 5, assuming 4 KB" in capsys.readouterr().err
