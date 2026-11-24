@@ -836,16 +836,18 @@ class Chip:
             word[i] &= value
         return struct.unpack('<L', bytes(word))[0]
 
-    def image_disables_bootloader(self, image, address, start):
+    def image_disables_bootloader(self, image, address, start=None):
         """Return True if writing the image would lock out this bootloader.
 
         start is the boot loader word before the write, as for
-        bootloader_word_after_write. An image that programs no CCFG byte
+        bootloader_word_after_write. None means BLANK_WORD. An image that programs no CCFG byte
         leaves CCFG blank after an erase, which makes the image invalid so
         the ROM bootloader runs, and leaves it unchanged otherwise.
         """
         if not self.image_has_ccfg(image, address):
             return False
+        if start is None:
+            start = self.BLANK_WORD
         word = self.bootloader_word_after_write(image, address, start)
         return not self._bootloader_enabled(word)
 
@@ -891,6 +893,8 @@ class CC2538(Chip):
             self.size *= 0x20000  # in bytes
         else:
             self.size = 0x10000  # in bytes
+            # Unknown size code, so the end of flash (and CCFG) is a guess
+            self.ccfg_known = False
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -1231,6 +1235,19 @@ def ranges_overlap(ranges, start, length):
                for r_start, r_length in ranges)
 
 
+def writes_guessed_ccfg(device, args, firmware, ieee_addr):
+    """Return True if the run writes into the page holding the CCFG and
+    IEEE address locations that were guessed for this chip. An erase alone
+    leaves CCFG blank, which keeps the ROM boot loader reachable."""
+    if ieee_addr is not None:
+        return True  # -i writes into the guessed location
+    if not (args.write or args.erase_write):
+        return False
+    page = device.page_align_down(device.ccfg_range()[0])
+    return ranges_overlap([(args.address, len(firmware.bytes))],
+                          page, device.flash_end - page)
+
+
 FORCE_NOTE = ("--force also skips the other confirmation questions, the "
               "checks that stop -w from writing outside flash and -w and -r "
               "from going past the end of flash, and the page alignment "
@@ -1326,10 +1343,12 @@ def ccfg_write_question(device, image, address, erase_ranges, write_erase,
         lost = device.ccfg_bits_lost(image, address, chip_ccfg)
         # When the image sets an enabled word, its pin and level bytes
         # matter even where they are 0xFF, so check every byte of the word.
-        # A blank or disabled image word is handled by the lockout check.
+        # A blank image word leaves the chip word as it is, and a disabled
+        # one is handled by the lockout check.
         image_word = device.bootloader_word_after_write(
             image, address, device.BLANK_WORD)
         bl_lost = (device.image_covers_bootloader_word(image, address)
+                   and image_word != 0xFFFFFFFF
                    and device._bootloader_enabled(image_word)
                    and any(start[i] & value != value for i, value in
                            device.image_bootloader_bytes(image,
@@ -1725,7 +1744,7 @@ def main_cli():
                             device.flash_end)
             write_erase = (erase_start, erase_end - erase_start)
         if (not args.force and not device.ccfg_known
-                and (args.write or args.erase_write or ieee_addr is not None)
+                and writes_guessed_ccfg(device, args, firmware, ieee_addr)
                 and not query_yes_no("This chip was not recognised, so the "
                                      "location of its CCFG is a guess and "
                                      "the boot loader lockout and IEEE "

@@ -1518,7 +1518,7 @@ def test_unknown_ccfg_location_asks_once(fake_cli, monkeypatch, tmp_path, option
     monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
     fw = tmp_path / "fw.bin"
     fw.write_bytes(b"\x01" * 0x100)
-    args = options + ([str(fw)] if options == ["-w"] else [])
+    args = options + (["-a", str(0xF00), str(fw)] if options == ["-w"] else [])
     with pytest.raises(SystemExit) as exc:
         fake_cli(*args)
     assert "Aborted" in str(exc.value.code)
@@ -1530,3 +1530,39 @@ def test_unknown_ccfg_location_asks_once(fake_cli, monkeypatch, tmp_path, option
 def test_unknown_wafer_marks_ccfg_unknown():
     fake = _FakeCommandInterface([0x00, 0x00, 0x00, 0x00])
     assert CC26xx(fake).ccfg_known is False
+
+
+def test_unknown_ccfg_location_app_write_does_not_ask(fake_cli, monkeypatch, tmp_path):
+    def fail(question, default):
+        raise AssertionError("must not prompt")
+    monkeypatch.setattr(bsl, "query_yes_no", fail)
+    monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)
+    fake_cli("-e", "-w", str(fw))
+    assert "write" in fake_cli.cmd.calls
+
+
+def test_cc2538_blank_image_word_keeps_chip_backdoor():
+    device = CC2538.__new__(CC2538)
+    device.bootloader_address = 0x100
+    image = bytearray(b"\xFF" * 0x12C)  # padding up to the end of CCFG
+    image[0x104:0x108] = b"\x00" * 4   # another CCFG setting
+    # Chip word 0xF3FFFFFF (backdoor on PA3), rest of CCFG blank
+    device.read_memory = lambda addr: (bytearray(b"\xFF\xFF\xFF\xF3")
+                                       if addr == 0x100 else bytearray(b"\xFF" * 4))
+    assert bsl.ccfg_write_question(device, image, 0, [], None) is None
+
+
+def test_image_disables_bootloader_defaults_to_blank_start():
+    device = _ccfg_tail_device()
+    image = bytearray(0x100) + bytearray(88)  # BL_CONFIG = 0
+    assert device.image_disables_bootloader(image, 0) is True
+
+
+def test_cc2538_unknown_flash_size_marks_ccfg_unknown():
+    class Ci:
+        def cmdMemRead(self, addr):
+            return bytearray([0x00, 0x00, 0x00, 0x70])  # reserved size code
+
+    assert CC2538(Ci()).ccfg_known is False
