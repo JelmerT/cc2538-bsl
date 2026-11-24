@@ -1569,6 +1569,7 @@ def test_cc2538_flash_size_code_sets_known(code, known):
     device = CC2538(Ci())
     assert device.ccfg_known is known
     assert device.size_known is known
+    assert device.size_code == (None if known else code)
 
 
 @pytest.mark.parametrize("options, reaches", [
@@ -1667,3 +1668,32 @@ def test_unknown_size_warning_shown_with_quiet(fake_cli, monkeypatch, tmp_path, 
     monkeypatch.setattr(_FakeDevice, "size_code", 5, raising=False)
     fake_cli("-q", "-r", "-l", "16", str(tmp_path / "out.bin"))
     assert "unknown flash size code 5, assuming 4 KB" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("address, length, refused", [
+    (0x00200000, 0x10000, False),  # inside the guessed 64 KB
+    (0x0020F000, 0x2000, True),    # crosses the guessed end
+    (0x00210000, 0x1000, True),    # past it, inside the largest flash
+    (0x20000000, 0x100, False),    # RAM
+])
+def test_write_past_guessed_end_refused(address, length, refused):
+    device = CC2538.__new__(CC2538)
+    device.flash_start_addr = 0x00200000
+    device.size = 0x10000
+    device.size_known = False
+    device.size_code = 5
+    if refused:
+        with pytest.raises(bsl.CmdException) as exc:
+            bsl.check_guessed_flash_end(device, address, length)
+        assert "code 5" in str(exc.value)
+    else:
+        bsl.check_guessed_flash_end(device, address, length)
+
+
+def test_erase_range_error_names_guessed_size():
+    device = _FakeDevice(_FakeCmd())
+    device.size_known = False
+    device.size_code = 6
+    with pytest.raises(ValueError) as exc:
+        bsl.check_erase_range(device, 0x1000, 0x100)
+    assert "unknown flash size code 6" in str(exc.value)

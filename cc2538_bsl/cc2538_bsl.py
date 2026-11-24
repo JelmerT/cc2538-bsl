@@ -760,6 +760,8 @@ class Chip:
 
     ccfg_known = True  # False when the CCFG address is only a guess
     size_known = True  # False when the flash size is only a guess
+    size_code = None   # the undocumented size code behind a guessed size
+    max_flash_size = None  # largest flash the chip family can have
 
     def ccfg_range(self):
         """Return the (address, length) of the CCFG area."""
@@ -876,6 +878,8 @@ class Chip:
 
 
 class CC2538(Chip):
+    max_flash_size = 0x80000
+
     def __init__(self, command_interface):
         super().__init__(command_interface)
         self.flash_start_addr = 0x00200000
@@ -900,6 +904,8 @@ class CC2538(Chip):
             self.ccfg_known = False
             self.size_known = False
             self.size_code = (model[3] & 0x70) >> 4
+            mdebug(5, "Warning: unknown flash size code %d, assuming 64 KB"
+                      % self.size_code)
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -1438,15 +1444,42 @@ def ccfg_write_question(device, image, address, erase_ranges, write_erase,
             "Do you want to continue?")
 
 
+def guessed_size_note(device):
+    """Describe a guessed flash size for messages."""
+    code = ("unknown flash size code %d" % device.size_code
+            if device.size_code is not None else "unknown flash size")
+    return "%s, assuming %d KB" % (code, device.size >> 10)
+
+
 def check_erase_range(device, start, length):
     """Reject an erase range that is empty or not entirely inside flash."""
     if length <= 0:
         raise ValueError("Erase range end must be after its start")
     if start < device.flash_start_addr or start + length > device.flash_end:
-        raise ValueError("Erase range 0x%08X-0x%08X is outside flash "
-                         "(0x%08X-0x%08X)" % (start, start + length,
-                                              device.flash_start_addr,
-                                              device.flash_end))
+        message = ("Erase range 0x%08X-0x%08X is outside flash "
+                   "(0x%08X-0x%08X)" % (start, start + length,
+                                        device.flash_start_addr,
+                                        device.flash_end))
+        if not device.size_known:
+            message += " (%s)" % guessed_size_note(device)
+        raise ValueError(message)
+
+
+def check_guessed_flash_end(device, address, length):
+    """Refuse a write that reaches past a guessed end of flash.
+
+    Flash there cannot be erased, because erases stop at the guessed end,
+    so the write would be ANDed with old data. --force does not apply.
+    """
+    if device.size_known or device.max_flash_size is None:
+        return
+    max_end = device.flash_start_addr + device.max_flash_size
+    if address < max_end and address + length > device.flash_end:
+        raise CmdException("Write 0x%08X-0x%08X reaches past the end of "
+                           "flash at 0x%08X, which is a guess (%s), so that "
+                           "flash cannot be erased first."
+                           % (address, address + length, device.flash_end,
+                              guessed_size_note(device)))
 
 
 def check_write_target(device, address, force=False, erase_write=False):
@@ -1727,9 +1760,9 @@ def main_cli():
 
         if not device.size_known:
             # Printed even with -q: reads without -l stop at this size
-            print("Warning: unknown flash size code %d, assuming %d KB. "
-                  "Reads, erases and range checks use this size."
-                  % (device.size_code, device.size >> 10), file=sys.stderr)
+            print("Warning: %s. Reads, erases and range checks use this "
+                  "size, and writes cannot go past it."
+                  % guessed_size_note(device), file=sys.stderr)
 
         # Choose a good default address unless the user specified -a
         if args.address is None:
@@ -1764,6 +1797,8 @@ def main_cli():
                                args.erase_write)
             check_flash_bounds(device, args.address, len(firmware.bytes),
                                "Write", args.force)
+            check_guessed_flash_end(device, args.address,
+                                    len(firmware.bytes))
         write_erase = None
         if args.erase_write:
             # Cover every page the image touches
