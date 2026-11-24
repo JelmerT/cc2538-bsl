@@ -771,8 +771,8 @@ class Chip:
         """
         if self.size_known:
             return None
-        return ("Warning: %s. Reads, erases and range checks use this size, "
-                "and writes cannot go past it." % guessed_size_note(self))
+        return ("Warning: %s. Reads, erases and range checks use this size."
+                % guessed_size_note(self))
 
     def ccfg_range(self):
         """Return the (address, length) of the CCFG area."""
@@ -939,7 +939,8 @@ class CC2538(Chip):
             ieee_addr = ieee_addr_end + ieee_addr
 
         flash = ("%dKB Flash" % (self.size >> 10) if self.size_known
-                 else "%dKB Flash (guessed)" % (self.size >> 10))
+                 else "%dKB Flash (guessed, size code %d)"
+                 % (self.size >> 10, self.size_code))
         mdebug(5, "CC2538 PG%d.%d: %s, %dKB SRAM, CCFG at 0x%08X"
                % (pg_major, pg_minor, flash, sram, self.bootloader_address))
         mdebug(5, "Primary IEEE Address: %s"
@@ -1485,8 +1486,7 @@ def check_guessed_flash_end(device, address, length):
             or device.max_flash_size is None):
         return
     max_end = device.flash_start_addr + device.max_flash_size
-    if (device.flash_start_addr <= address < max_end
-            and address + length > device.flash_end):
+    if address < max_end and address + length > device.flash_end:
         raise CmdException("Write 0x%08X-0x%08X reaches past the end of "
                            "flash at 0x%08X, which is a guess (%s), so that "
                            "flash cannot be erased first."
@@ -1494,11 +1494,16 @@ def check_guessed_flash_end(device, address, length):
                               guessed_size_note(device)))
 
 
-def check_write_target(device, address, force=False, erase_write=False):
-    """Reject write addresses the bootloader cannot program as flash."""
+def check_write_alignment(address):
+    """Reject a write address that is not 4-byte aligned."""
     if address % 4:
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
                            % address)
+
+
+def check_write_target(device, address, force=False, erase_write=False):
+    """Reject write addresses the bootloader cannot program as flash."""
+    check_write_alignment(address)
     if not device.flash_start_addr <= address < device.flash_end:
         message = ("Write address 0x%08X is outside flash (0x%08X-0x%08X)."
                    % (address, device.flash_start_addr, device.flash_end))
@@ -1773,7 +1778,8 @@ def main_cli():
         size_warning = device.size_warning()
         if size_warning:
             # Printed even with -q: reads without -l stop at this size
-            print(size_warning, file=sys.stderr)
+            print(size_warning + " Writes cannot go past it.",
+                  file=sys.stderr)
 
         # Choose a good default address unless the user specified -a
         if args.address is None:
@@ -1804,8 +1810,8 @@ def main_cli():
             check_erase_range(device, erase_range[0], erase_range[1])
             erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
-            # First, so the checks below do not suggest a --force that
-            # cannot help
+            # Before the checks that suggest a --force that cannot help
+            check_write_alignment(args.address)
             check_guessed_flash_end(device, args.address,
                                     len(firmware.bytes))
             check_write_target(device, args.address, args.force,

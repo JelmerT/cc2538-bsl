@@ -1676,7 +1676,8 @@ def test_unknown_size_warning_shown_with_quiet(fake_cli, monkeypatch, tmp_path, 
     (0x00210000, 0x1000, True),    # past it, inside the largest flash
     (0x00280000, 0x100, False),    # end of the largest flash
     (0x20000000, 0x100, False),    # RAM
-    (0x001FF000, 0x12000, False),  # starts below flash, left to other checks
+    (0x001FF000, 0x12000, True),   # starts below flash, crosses the end
+    (0x001FF000, 0x800, False),    # below flash, ends inside the guess
 ])
 def test_write_past_guessed_end_refused(address, length, refused):
     device = CC2538.__new__(CC2538)
@@ -1777,4 +1778,38 @@ def test_cc2538_info_line_marks_guessed_size(monkeypatch, capsys):
 
     monkeypatch.setattr(bsl, "QUIET", 5)
     CC2538(Ci())
-    assert "64KB Flash (guessed)" in capsys.readouterr().err
+    assert "64KB Flash (guessed, size code 5)" in capsys.readouterr().err
+
+
+def _guessed_high_flash(monkeypatch):
+    class HighFlash(_FakeDevice):
+        size_known = False
+        size_code = 5
+        max_flash_size = 0x80000
+
+        def __init__(self, command_interface):
+            super().__init__(command_interface)
+            self.flash_start_addr = 0x1000
+
+    monkeypatch.setattr(bsl, "CC26xx", HighFlash)
+
+
+def test_cli_forced_write_from_below_flash_past_guessed_end_refused(
+        fake_cli, monkeypatch, tmp_path):
+    _guessed_high_flash(monkeypatch)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x2000)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-f", "-w", "-a", str(0x800), str(fw))
+    assert "which is a guess" in str(exc.value.code)
+    assert "write" not in fake_cli.cmd.calls
+
+
+def test_cli_alignment_reported_before_guessed_end(fake_cli, monkeypatch,
+                                                   tmp_path):
+    _guessed_high_flash(monkeypatch)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x200)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-e", "-w", "-a", str(0x1F02), str(fw))
+    assert "not 4-byte aligned" in str(exc.value.code)
