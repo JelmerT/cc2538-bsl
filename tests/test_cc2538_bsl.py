@@ -1979,11 +1979,32 @@ def test_erase_write_range_refuses_below_flash(start, address, message):
     assert message in str(exc.value)
 
 
-def test_negative_address_rejected_before_connecting(fake_cli, tmp_path):
+@pytest.mark.parametrize("options, message", [
+    (("-r", "-a=-4"), "-a must not be negative"),
+    (("-r", "-l", "0"), "-l must be positive"),
+    (("-r", "-b", "0"), "-b must be positive"),
+    (("-w", "-W"), "-w and -W both write"),
+])
+def test_bad_options_rejected_before_connecting(fake_cli, tmp_path, capsys,
+                                                options, message):
     with pytest.raises(SystemExit) as exc:
-        fake_cli("-r", "-a=-4", str(tmp_path / "out.bin"))
+        fake_cli(*options, str(tmp_path / "out.bin"))
     assert exc.value.code == 2
+    assert message in capsys.readouterr().err
     assert fake_cli.cmd.calls == []
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("0x00200000", 0x200000), ("2097152", 0x200000), ("0100", 100),
+    ("0X10", 16),
+])
+def test_parse_int(value, expected):
+    assert bsl.parse_int(value) == expected
+
+
+def test_hex_address_accepted(fake_cli, tmp_path):
+    fake_cli("-r", "-a", "0x10", "-l", "0x10", str(tmp_path / "out.bin"))
+    assert fake_cli.cmd.read_addr == 0x1C
 
 
 def test_check_write_returns_erase_write_range():

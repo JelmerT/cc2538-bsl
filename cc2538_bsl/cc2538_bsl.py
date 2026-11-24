@@ -1671,6 +1671,14 @@ class _VersionAction(argparse.Action):
         parser.exit()
 
 
+def parse_int(value):
+    """Parse a decimal or 0x-prefixed integer for -a, -l and -b."""
+    try:
+        return int(value, 0)
+    except ValueError:
+        return int(value, 10)  # decimal with leading zeros
+
+
 def cli_setup():
     parser = argparse.ArgumentParser()
 
@@ -1683,10 +1691,10 @@ def cli_setup():
     parser.add_argument('-W', '--erase-write', action='store_true', help='Write after erasing the pages the image covers (avoids a mass erase). Whole pages are erased, so other data in the last page is lost. A start address that is not page aligned requires --force.')
     parser.add_argument('-v', '--verify', action='store_true', help='Verify (CRC32 check)')
     parser.add_argument('-r', '--read', action='store_true', help='Read')
-    parser.add_argument('-l', '--len', type=int, help='Length of read (default: to the end of flash)')
+    parser.add_argument('-l', '--len', type=parse_int, help='Length of read (default: to the end of flash). Decimal unless prefixed with 0x')
     parser.add_argument('-p', '--port', help='Serial port (default: first USB-like port in /dev)')
-    parser.add_argument('-b', '--baud', type=int, help=f"Baud speed (default: {DEFAULT_BAUD})")
-    parser.add_argument('-a', '--address', type=int, help='Target address')
+    parser.add_argument('-b', '--baud', type=parse_int, help=f"Baud speed (default: {DEFAULT_BAUD})")
+    parser.add_argument('-a', '--address', type=parse_int, help='Target address. Decimal unless prefixed with 0x')
     parser.add_argument('-i', '--ieee-address', help='Set the secondary 64 bit IEEE address')
     parser.add_argument('--bootloader-active-high', action='store_true', help='Use active high signals to enter bootloader')
     parser.add_argument('--bootloader-invert-lines', action='store_true', help='Inverts the use of RTS and DTR to enter bootloader')
@@ -1699,6 +1707,12 @@ def cli_setup():
     args = parser.parse_args()
     if args.address is not None and args.address < 0:
         parser.error('the address given with -a must not be negative')
+    if args.len is not None and args.len <= 0:
+        parser.error('the length given with -l must be positive')
+    if args.baud is not None and args.baud <= 0:
+        parser.error('the baud rate given with -b must be positive')
+    if args.write and args.erase_write:
+        parser.error('-w and -W both write the image; use one of them')
     if args.port == '':
         parser.error('the serial port given with -p is empty')
     if args.file is None and (args.write or args.erase_write or args.verify
@@ -1722,7 +1736,7 @@ def main_cli():
 
     force_speed = False
 
-    if args.baud:
+    if args.baud is not None:
         force_speed = True
     else:
         args.baud = DEFAULT_BAUD
@@ -1753,10 +1767,6 @@ def main_cli():
         if (args.read and not (args.write  or args.erase_write)
             and args.verify):
             raise Exception('Verify after read not implemented.')
-
-        if args.len is not None and args.len <= 0:
-            raise Exception('Length must be positive but %d was provided'
-                            % (args.len,))
 
         # Validate the firmware before touching the device
         firmware = None
