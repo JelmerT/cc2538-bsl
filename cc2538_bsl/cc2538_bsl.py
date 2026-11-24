@@ -1494,16 +1494,25 @@ def check_guessed_flash_end(device, address, length):
                               guessed_size_note(device)))
 
 
-def check_write_alignment(address):
-    """Reject a write address that is not 4-byte aligned."""
+def check_write(device, address, length, force=False, erase_write=False):
+    """Run every check on a write before anything is sent.
+
+    Alignment and the guessed end of flash come first, so the later errors
+    do not suggest a --force that cannot help.
+    """
     if address % 4:
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
                            % address)
+    check_guessed_flash_end(device, address, length)
+    check_write_target(device, address, force, erase_write)
+    check_flash_bounds(device, address, length, "Write", force)
 
 
 def check_write_target(device, address, force=False, erase_write=False):
-    """Reject write addresses the bootloader cannot program as flash."""
-    check_write_alignment(address)  # also for callers outside main_cli
+    """Reject write addresses the bootloader cannot program as flash.
+
+    Part of check_write, which also checks alignment and length.
+    """
     if not device.flash_start_addr <= address < device.flash_end:
         message = ("Write address 0x%08X is outside flash (0x%08X-0x%08X)."
                    % (address, device.flash_start_addr, device.flash_end))
@@ -1524,11 +1533,8 @@ def check_write_target(device, address, force=False, erase_write=False):
 def check_flash_bounds(device, address, length, action, force=False):
     """Reject an operation that starts in flash and runs past its end.
 
-    Addresses outside flash (e.g. RAM) are left to the bootloader. Writes
-    past a guessed end of flash are refused even with force.
+    Addresses outside flash (e.g. RAM) are left to the bootloader.
     """
-    if action == "Write":
-        check_guessed_flash_end(device, address, length)
     if (device.flash_start_addr <= address < device.flash_end
             and address + length > device.flash_end):
         message = ("%s of %d bytes at 0x%08X runs past the end of flash "
@@ -1781,7 +1787,7 @@ def main_cli():
         size_warning = device.size_warning()
         if size_warning:
             # Printed even with -q: reads without -l stop at this size
-            print(size_warning + " Writes into flash cannot go past it.",
+            print(size_warning + " Writes that reach past it are refused.",
                   file=sys.stderr)
 
         # Choose a good default address unless the user specified -a
@@ -1813,16 +1819,8 @@ def main_cli():
             check_erase_range(device, erase_range[0], erase_range[1])
             erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
-            # Alignment and the guessed end first, so the errors below do
-            # not suggest a --force that cannot help. check_write_target
-            # repeats the alignment check for callers outside main_cli.
-            check_write_alignment(args.address)
-            check_guessed_flash_end(device, args.address,
-                                    len(firmware.bytes))
-            check_write_target(device, args.address, args.force,
-                               args.erase_write)
-            check_flash_bounds(device, args.address, len(firmware.bytes),
-                               "Write", args.force)
+            check_write(device, args.address, len(firmware.bytes),
+                        args.force, args.erase_write)
         write_erase = None
         if args.erase_write:
             # Cover every page the image touches

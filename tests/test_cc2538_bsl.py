@@ -1815,14 +1815,23 @@ def test_cli_alignment_reported_before_guessed_end(fake_cli, monkeypatch,
     assert "not 4-byte aligned" in str(exc.value.code)
 
 
-def test_flash_bounds_refuses_forced_write_past_guessed_end():
+@pytest.mark.parametrize("address, length, force, refused", [
+    (0x0020F000, 0x2000, True, True),   # starts inside, crosses the guess
+    (0x00210000, 4, True, True),        # starts past the guessed end
+    (0x00210000, 4, False, True),       # same, guessed-end error not --force
+    (0x00280000, 4, True, False),       # past the largest flash
+])
+def test_check_write_guessed_end(address, length, force, refused):
     device = CC2538.__new__(CC2538)
     device.flash_start_addr = 0x00200000
     device.size = 0x10000
     device.size_known = False
     device.size_code = 0
-    with pytest.raises(bsl.CmdException) as exc:
-        bsl.check_flash_bounds(device, 0x0020F000, 0x2000, "Write", True)
-    assert "which is a guess" in str(exc.value)
-    # Reads past a guessed end only warn under force
-    bsl.check_flash_bounds(device, 0x0020F000, 0x2000, "Read", True)
+    device.page_size = 0x800
+    if refused:
+        with pytest.raises(bsl.CmdException) as exc:
+            bsl.check_write(device, address, length, force)
+        assert "which is a guess" in str(exc.value)
+        assert "--force" not in str(exc.value)
+    else:
+        bsl.check_write(device, address, length, force)
