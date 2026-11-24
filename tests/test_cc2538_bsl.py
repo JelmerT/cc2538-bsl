@@ -1711,3 +1711,59 @@ def test_cli_forced_write_past_guessed_end_refused(fake_cli, monkeypatch, tmp_pa
     assert "which is a guess" in str(exc.value.code)
     assert "--force to continue" not in str(exc.value.code)
     assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+@pytest.mark.parametrize("options", [
+    ("-e", "-w", "-a", str(0xF00)),  # crosses the guessed end
+    ("-W", "-a", str(0x1000)),       # starts past it
+])
+def test_cli_write_past_guessed_end_names_guess(fake_cli, monkeypatch,
+                                                tmp_path, options):
+    # Without -f the guessed-end error comes first, not a --force hint
+    monkeypatch.setattr(_FakeDevice, "size_known", False, raising=False)
+    monkeypatch.setattr(_FakeDevice, "size_code", 5, raising=False)
+    monkeypatch.setattr(_FakeDevice, "max_flash_size", 0x80000, raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x200)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli(*options, str(fw))
+    assert "which is a guess" in str(exc.value.code)
+    assert "--force" not in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_guessed_flash_end_ignores_empty_write():
+    device = CC2538.__new__(CC2538)
+    device.flash_start_addr = 0x00200000
+    device.size = 0x10000
+    device.size_known = False
+    bsl.check_guessed_flash_end(device, 0x00210004, 0)
+
+
+def test_cc2538_unknown_size_warning_printed_once(fake_cli, monkeypatch,
+                                                  tmp_path, capsys):
+    # A real CC2538 with size code 5, created by main_cli
+    class Cmd(_FakeCmd):
+        def cmdGetChipId(self):
+            return 0xb964
+
+        def cmdSetXOsc(self):
+            return 0
+
+        def cmdMemRead(self, addr):
+            return bytearray([0x00, 0x00, 0x00, 5 << 4])
+
+    cmd = Cmd()
+    monkeypatch.setattr(bsl, "CommandInterface", lambda: cmd)
+    fake_cli("-b", "500000", "-r", "-l", "16", str(tmp_path / "out.bin"))
+    err = capsys.readouterr().err
+    assert err.count("unknown flash size code 5") == 1
+
+
+def test_cc2538_size_warning_for_library_callers():
+    class Ci:
+        def cmdMemRead(self, addr):
+            return bytearray([0x00, 0x00, 0x00, 0])
+
+    assert "unknown flash size code 0" in CC2538(Ci()).size_warning()
+    assert _FakeDevice(_FakeCmd()).size_warning() is None

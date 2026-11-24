@@ -763,6 +763,17 @@ class Chip:
     size_code = None   # the undocumented size code behind a guessed size
     max_flash_size = None  # largest flash the chip family can have
 
+    def size_warning(self):
+        """Return a warning when the flash size is a guess, else None.
+
+        The constructor does not print it; main_cli does, and other callers
+        should check it after creating the device.
+        """
+        if self.size_known:
+            return None
+        return ("Warning: %s. Reads, erases and range checks use this size, "
+                "and writes cannot go past it." % guessed_size_note(self))
+
     def ccfg_range(self):
         """Return the (address, length) of the CCFG area."""
         return self.bootloader_address, 44
@@ -903,7 +914,7 @@ class CC2538(Chip):
             # the end of flash (and CCFG) is a guess
             self.ccfg_known = False
             self.size_known = False
-            self.size_code = (model[3] & 0x70) >> 4  # main_cli warns
+            self.size_code = (model[3] & 0x70) >> 4  # see size_warning()
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -1469,7 +1480,8 @@ def check_guessed_flash_end(device, address, length):
     Flash there cannot be erased, because erases stop at the guessed end,
     so the write would be ANDed with old data. --force does not apply.
     """
-    if device.size_known or device.max_flash_size is None:
+    if (length <= 0 or device.size_known
+            or device.max_flash_size is None):
         return
     max_end = device.flash_start_addr + device.max_flash_size
     if address < max_end and address + length > device.flash_end:
@@ -1756,11 +1768,10 @@ def main_cli():
             mdebug(10, "    Target id 0x%x, %s" % (chip_id, chip_id_str))
             device = CC2538(cmd)
 
-        if not device.size_known:
+        size_warning = device.size_warning()
+        if size_warning:
             # Printed even with -q: reads without -l stop at this size
-            print("Warning: %s. Reads, erases and range checks use this "
-                  "size, and writes cannot go past it."
-                  % guessed_size_note(device), file=sys.stderr)
+            print(size_warning, file=sys.stderr)
 
         # Choose a good default address unless the user specified -a
         if args.address is None:
