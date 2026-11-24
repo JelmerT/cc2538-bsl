@@ -358,7 +358,7 @@ def test_erase_read_write_prompts_only_for_overwrite(fake_cli, monkeypatch, tmp_
     fw.write_bytes(b"\x01" * 16)
     questions = []
     monkeypatch.setattr(bsl, "query_yes_no",
-                        lambda question, default: questions.append(question) or True)
+                        lambda question, default, *a: questions.append(question) or True)
     fake_cli("-e", "-w", "-r", "-l", "16", str(fw))
     assert len(questions) == 1
     assert "overwrite your input file" in questions[0]
@@ -771,7 +771,7 @@ def _locked_image():
 
 
 def test_declined_backdoor_warning_happens_before_erase(fake_cli, monkeypatch, tmp_path):
-    monkeypatch.setattr(bsl, "query_yes_no", lambda question, default: False)
+    monkeypatch.setattr(bsl, "query_yes_no", lambda question, default, *a: False)
     fw = tmp_path / "fw.bin"
     fw.write_bytes(_locked_image())
     with pytest.raises(SystemExit) as exc:
@@ -781,7 +781,7 @@ def test_declined_backdoor_warning_happens_before_erase(fake_cli, monkeypatch, t
 
 
 def test_force_skips_backdoor_warning(fake_cli, monkeypatch, tmp_path):
-    def fail(question, default):
+    def fail(question, default, *a):
         raise AssertionError("must not prompt")
     monkeypatch.setattr(bsl, "query_yes_no", fail)
     fw = tmp_path / "fw.bin"
@@ -847,7 +847,7 @@ def test_failed_write_stays_in_bootloader(fake_cli, monkeypatch, tmp_path):
 
 
 def test_interrupt_before_flash_change_resets_target(fake_cli, monkeypatch, tmp_path):
-    def interrupt(question, default):
+    def interrupt(question, default, *a):
         raise KeyboardInterrupt
     monkeypatch.setattr(bsl, "query_yes_no", interrupt)
     fw = tmp_path / "fw.bin"
@@ -923,7 +923,7 @@ def test_crc_mismatch_without_write_resets(fake_cli, monkeypatch, tmp_path):
 
 
 def test_declined_disable_bootloader_resets_before_erase(fake_cli, monkeypatch):
-    monkeypatch.setattr(bsl, "query_yes_no", lambda question, default: False)
+    monkeypatch.setattr(bsl, "query_yes_no", lambda question, default, *a: False)
     with pytest.raises(SystemExit):
         fake_cli("-e", "-D")
     assert fake_cli.cmd.calls == ["open", "reset"]
@@ -932,7 +932,7 @@ def test_declined_disable_bootloader_resets_before_erase(fake_cli, monkeypatch):
 def test_disable_bootloader_prompts_once(fake_cli, monkeypatch):
     questions = []
     monkeypatch.setattr(bsl, "query_yes_no",
-                        lambda question, default: questions.append(question) or True)
+                        lambda question, default, *a: questions.append(question) or True)
     fake_cli("-D")
     assert len(questions) == 1
     assert fake_cli.cmd.calls == ["open", "write", "reset"]
@@ -992,7 +992,7 @@ def test_write_memory_guard_only_for_cc2538_image(monkeypatch, addr, prompted):
     ci, _ = _packet_interface(monkeypatch, None)
     questions = []
     monkeypatch.setattr(bsl, "query_yes_no",
-                        lambda question, default: questions.append(question) or True)
+                        lambda question, default, *a: questions.append(question) or True)
     image = bytearray(b"\x01" * 524288)
     image[524247] = 0xEF
     assert ci.writeMemory(addr, image)
@@ -1056,7 +1056,7 @@ def test_forced_erase_write_outside_flash_has_no_force_hint(fake_cli, tmp_path):
 
 
 def test_erase_write_restoring_ccfg_does_not_prompt(fake_cli, monkeypatch, tmp_path):
-    def fail(question, default):
+    def fail(question, default, *a):
         raise AssertionError("must not prompt")
     monkeypatch.setattr(bsl, "query_yes_no", fail)
     fw = tmp_path / "fw.bin"
@@ -1237,7 +1237,7 @@ def test_partial_word_on_blank_chip_does_not_blame_firmware():
 def _declining_prompt(monkeypatch):
     questions = []
 
-    def decline(question, default):
+    def decline(question, default, *a):
         questions.append(question)
         return False
 
@@ -1286,7 +1286,7 @@ def test_erase_write_without_ccfg_prompts(fake_cli, monkeypatch, tmp_path, image
     (0xF00, b"\x01" * 0xD4 + b"\xFF" * 44),
 ], ids=["first-page", "before-ccfg", "blank-ccfg"])
 def test_mass_erase_and_write_without_ccfg_agree(fake_cli, monkeypatch, tmp_path, options, address, image):
-    def fail(question, default):
+    def fail(question, default, *a):
         raise AssertionError("must not prompt")
     monkeypatch.setattr(bsl, "query_yes_no", fail)
     fw = tmp_path / "fw.bin"
@@ -1371,7 +1371,7 @@ def test_closed_input_at_prompt_mentions_force(monkeypatch):
     with pytest.raises(Exception) as exc:
         bsl.query_yes_no("Continue?", "no")
     assert "--force" in str(exc.value)
-    assert "--skip-ccfg-check" in str(exc.value)
+    assert "--skip-ccfg-check" not in str(exc.value)
 
 
 def test_interrupted_reset_warning_has_reason(capsys):
@@ -1579,7 +1579,7 @@ def test_cc2538_flash_size_code_sets_known(code, known):
 def test_unknown_ccfg_location_accepted_goes_ahead(fake_cli, monkeypatch, tmp_path, options, reaches):
     questions = []
     monkeypatch.setattr(bsl, "query_yes_no",
-                        lambda q, d: questions.append(q) or True)
+                        lambda q, d, *a: questions.append(q) or True)
     monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
     monkeypatch.setattr(_FakeDevice, "addr_ieee_address_secondary",
                         0x1000 - 44 - 8, raising=False)
@@ -1593,7 +1593,7 @@ def test_unknown_ccfg_location_accepted_goes_ahead(fake_cli, monkeypatch, tmp_pa
 def test_unknown_ccfg_location_disable_bootloader_asks_both(fake_cli, monkeypatch):
     questions = []
     monkeypatch.setattr(bsl, "query_yes_no",
-                        lambda q, d: questions.append(q) or True)
+                        lambda q, d, *a: questions.append(q) or True)
     monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
     fake_cli("-D")
     assert "guessed address" in questions[0]
@@ -1602,7 +1602,7 @@ def test_unknown_ccfg_location_disable_bootloader_asks_both(fake_cli, monkeypatc
 
 @pytest.mark.parametrize("flag", ["-f", "--skip-ccfg-check"])
 def test_unknown_ccfg_location_flags_skip_question(fake_cli, monkeypatch, tmp_path, flag):
-    def fail(question, default):
+    def fail(question, default, *a):
         raise AssertionError("must not prompt")
     monkeypatch.setattr(bsl, "query_yes_no", fail)
     monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
@@ -1636,20 +1636,26 @@ def test_cc2538_unknown_size_mass_erase_asks():
     device.ccfg_known = False
     device.size_known = False
     args = type("Args", (), {"write": False, "erase_write": False,
-                             "disable_bootloader": False, "erase": True,
-                             "erase_page": "a,0x0,0x100", "read": True,
-                             "len": None})()
+                             "disable_bootloader": False, "erase": True})()
     question = bsl.guessed_ccfg_question(device, args, None)
     assert "-e erases only the guessed 4 KB" in question
-    assert "-E ranges" in question
-    assert "-r without -l" in question
 
 
-def test_unknown_size_read_with_length_does_not_ask():
-    device = _FakeDevice(_FakeCmd())
-    device.ccfg_known = False
-    device.size_known = False
-    args = type("Args", (), {"write": False, "erase_write": False,
-                             "disable_bootloader": False, "erase": False,
-                             "erase_page": None, "read": True, "len": 16})()
-    assert bsl.guessed_ccfg_question(device, args, None) is None
+def test_unknown_size_read_does_not_ask(fake_cli, monkeypatch, tmp_path):
+    def fail(question, default, *args):
+        raise AssertionError("must not prompt")
+    monkeypatch.setattr(bsl, "query_yes_no", fail)
+    monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
+    monkeypatch.setattr(_FakeDevice, "size_known", False, raising=False)
+    out = tmp_path / "out.bin"
+    fake_cli("-r", "-l", "16", str(out))
+    assert out.stat().st_size == 16
+
+
+def test_closed_input_hint_is_per_question(monkeypatch):
+    def closed():
+        raise EOFError
+    monkeypatch.setattr("builtins.input", closed)
+    with pytest.raises(Exception) as exc:
+        bsl.query_yes_no("Continue?", "no", bsl.SKIP_CCFG_HINT)
+    assert "--skip-ccfg-check" in str(exc.value)

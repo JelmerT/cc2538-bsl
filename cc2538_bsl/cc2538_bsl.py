@@ -899,6 +899,9 @@ class CC2538(Chip):
             # the end of flash (and CCFG) is a guess
             self.ccfg_known = False
             self.size_known = False
+            mdebug(5, "Warning: unknown flash size code %d, assuming 64 KB. "
+                      "Reads, erases and range checks use this size."
+                      % ((model[3] & 0x70) >> 4))
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -1126,7 +1129,13 @@ class CC26xx(Chip):
         return data
 
 
-def query_yes_no(question, default="yes"):
+SKIP_CCFG_HINT = ("Use --skip-ccfg-check to skip the CCFG, lockout and IEEE "
+                  "address questions, or --force to skip all prompts and "
+                  "some checks.")
+
+
+def query_yes_no(question, default="yes",
+                 skip_hint="Use --force to skip prompts."):
     valid = {"yes": True,
              "y": True,
              "ye": True,
@@ -1147,9 +1156,7 @@ def query_yes_no(question, default="yes"):
             choice = input().lower()
         except EOFError:
             raise Exception("No answer to a confirmation prompt (input is "
-                            "closed). Use --skip-ccfg-check to skip the "
-                            "CCFG, lockout and IEEE address questions, or "
-                            "--force to skip all prompts and some checks.")
+                            "closed). " + skip_hint)
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
@@ -1243,7 +1250,7 @@ def ranges_overlap(ranges, start, length):
 
 def guessed_ccfg_question(device, args, ieee_addr):
     """Return the question for a chip whose CCFG location is a guess, or
-    None when the run neither writes nor mass erases."""
+    None when no write, -i, -D or (with a guessed size) -e is requested."""
     if device.size_known:
         reason = "This chip was not recognised"
     else:
@@ -1260,15 +1267,9 @@ def guessed_ccfg_question(device, args, ieee_addr):
         parts.append("-D writes the boot loader word at the guessed "
                      "address 0x%08X, which may hold application code"
                      % device.bootloader_address)
-    if not device.size_known:
-        if args.erase:
-            parts.append("-e erases only the guessed %d KB of flash"
-                         % (device.size >> 10))
-        if args.erase_page is not None:
-            parts.append("-E ranges are checked against the guessed size")
-        if args.read and args.len is None:
-            parts.append("-r without -l reads only the guessed %d KB"
-                         % (device.size >> 10))
+    if args.erase and not device.size_known:
+        parts.append("-e erases only the guessed %d KB of flash"
+                     % (device.size >> 10))
     if not parts:
         return None
     return ("%s, so the location of its CCFG (%d KB of flash) is a guess: "
@@ -1769,7 +1770,7 @@ def main_cli():
         check_ccfg = not (args.force or args.skip_ccfg_check)
         if check_ccfg and not device.ccfg_known:
             question = guessed_ccfg_question(device, args, ieee_addr)
-            if question and not query_yes_no(question, "no"):
+            if question and not query_yes_no(question, "no", SKIP_CCFG_HINT):
                 raise Exception('Aborted by user.')
         if (args.write or args.erase_write) and check_ccfg \
                 and device.ccfg_known:
@@ -1779,7 +1780,7 @@ def main_cli():
                                            args.address, erase_ranges,
                                            write_erase,
                                            args.disable_bootloader)
-            if question and not query_yes_no(question, "no"):
+            if question and not query_yes_no(question, "no", SKIP_CCFG_HINT):
                 raise Exception('Aborted by user.')
         if ieee_addr is not None and check_ccfg and device.ccfg_known:
             all_erases = erase_ranges + ([write_erase] if write_erase else [])
@@ -1788,7 +1789,7 @@ def main_cli():
                 device, struct.pack('<Q', ieee_addr),
                 firmware.bytes if writing else None,
                 args.address, all_erases)
-            if question and not query_yes_no(question, "no"):
+            if question and not query_yes_no(question, "no", SKIP_CCFG_HINT):
                 raise Exception('Aborted by user.')
         if args.disable_bootloader:
             device.confirm_disable_bootloader(args.force)
