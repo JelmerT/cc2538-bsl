@@ -56,6 +56,7 @@ QUIET = 5
 
 # Default Baud
 DEFAULT_BAUD = 500000
+DEFAULT_READ_LEN = 0x80000
 
 try:
     import serial
@@ -717,6 +718,9 @@ class Chip:
         self.has_cmd_set_xosc = False
         self.page_size = 2048
 
+    @property
+    def flash_end(self):
+        return self.flash_start_addr + self.size
 
     def page_align_up(self, value):
         return int(math.ceil(value / self.page_size) * self.page_size)
@@ -914,6 +918,7 @@ class CC26xx(Chip):
         }
 
         chip_str = chips_dict.get(protocols & CC26xx.PROTO_MASK_BOTH, "Unknown")
+        pg_str = "PG unknown (0x%X)" % pg
 
         if pg == 1:
             pg_str = "PG1.0"
@@ -942,6 +947,7 @@ class CC26xx(Chip):
         chip_str = "CC1310"
         if protocols & CC26xx.PROTO_MASK_IEEE == CC26xx.PROTO_MASK_IEEE:
             chip_str = "CC1350"
+        pg_str = "PG unknown (0x%X)" % pg
 
         if pg == 0:
             pg_str = "PG1.0"
@@ -1067,6 +1073,34 @@ def parse_page_address_range(device, pg_range):
         return [page_addr[0], (page_addr[1] - page_addr[0])]
 
 
+def check_flash_bounds(device, address, length, action, force=False):
+    """Reject an operation that starts in flash and runs past its end.
+
+    Addresses outside flash (e.g. RAM) are left to the bootloader.
+    """
+    if (device.flash_start_addr <= address < device.flash_end
+            and address + length > device.flash_end):
+        message = ("%s of %d bytes at 0x%08X runs past the end of flash "
+                   "(0x%08X)." % (action, length, address, device.flash_end))
+        if not force:
+            raise CmdException(message + " Use --force to continue anyway.")
+        mdebug(5, "Warning: " + message)
+
+
+def get_read_length(device, address, requested, force=False):
+    """Return the 4-byte aligned read length, defaulting to the end of flash."""
+    if requested is not None:
+        length = requested
+    elif device.flash_start_addr <= address < device.flash_end:
+        length = device.flash_end - address
+    else:
+        length = DEFAULT_READ_LEN
+
+    length = (length + 3) & ~0x03
+    check_flash_bounds(device, address, length, "Read", force)
+    return length
+
+
 def version():
     # Use the installed package's version, set from git tags at build time.
     try:
@@ -1089,7 +1123,7 @@ def cli_setup():
     parser.add_argument('-W', '--erase-write', action='store_true', help='Write after erasing section to write to (avoids a mass erase). Rounds up section to erase if not page aligned.')
     parser.add_argument('-v', '--verify', action='store_true', help='Verify (CRC32 check)')
     parser.add_argument('-r', '--read', action='store_true', help='Read')
-    parser.add_argument('-l', '--len', type=int, default=0x80000, help='Length of read')
+    parser.add_argument('-l', '--len', type=int, help='Length of read (default: to the end of flash)')
     parser.add_argument('-p', '--port', help='Serial port (default: first USB-like port in /dev)')
     parser.add_argument('-b', '--baud', type=int, help=f"Baud speed (default: {DEFAULT_BAUD})")
     parser.add_argument('-a', '--address', type=int, help='Target address')
@@ -1099,9 +1133,14 @@ def cli_setup():
     parser.add_argument('--bootloader-sonoff-usb', action='store_true', help='Toggles RTS and DTR in the correct pattern for Sonoff USB dongle')
     parser.add_argument('-D', '--disable-bootloader', action='store_true', help='After finishing, disable the bootloader')
     parser.add_argument('--version', action='version', version='%(prog)s ' + version())
-    parser.add_argument('file')
+    parser.add_argument('file', nargs='?', default=None, help='Firmware file to write or verify, or output file for read')
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.file is None and (args.write or args.erase_write or args.verify
+                              or args.read):
+        parser.error('a file is required with -w, -W, -v or -r')
+
+    return args
 
 def main_cli():
     global QUIET
@@ -1127,8 +1166,8 @@ def main_cli():
                                  "file. This will overwrite your input file. "
                                  "Do you want to continue?", "no")):
                 raise Exception('Aborted by user.')
-        if ((args.erase and args.read) or (args.erase_page and args.read)
-            and not (args.write or args.erase_write)):
+        if ((args.erase or args.erase_page) and args.read
+                and not (args.write or args.erase_write)):
             if not (args.force or
                     query_yes_no("You are about to erase your target before "
                                  "reading. Do you want to continue?", "no")):
@@ -1138,9 +1177,17 @@ def main_cli():
             and args.verify):
             raise Exception('Verify after read not implemented.')
 
-        if args.len < 0:
+        if args.len is not None and args.len < 0:
             raise Exception('Length must be positive but %d was provided'
                             % (args.len,))
+
+        # Validate the firmware before touching the device
+        firmware = None
+        if args.write or args.erase_write or args.verify:
+            mdebug(5, "Reading data from %s" % args.file)
+            firmware = FirmwareFile(args.file)
+            if not firmware.bytes:
+                raise Exception('Firmware file %s is empty.' % args.file)
 
         # Try and find the port automatically
         if not args.port:
@@ -1169,9 +1216,6 @@ def main_cli():
                               args.bootloader_sonoff_usb)
         mdebug(5, "Opening port %(port)s, baud %(baud)d"
                % {'port': args.port, 'baud': args.baud})
-        if args.write or args.erase_write or args.verify:
-            mdebug(5, "Reading data from %s" % args.file)
-            firmware = FirmwareFile(args.file)
 
         mdebug(5, "Connecting to target...")
 
@@ -1213,6 +1257,14 @@ def main_cli():
                 raise CmdException("Can't switch target to external clock "
                                    "source. (Try forcing speed)")
 
+        # Check sizes before the first destructive operation
+        if args.write or args.erase_write:
+            check_flash_bounds(device, args.address, len(firmware.bytes),
+                               "Write", args.force)
+        if args.read:
+            read_length = get_read_length(device, args.address, args.len,
+                                          args.force)
+
         if args.erase:
             mdebug(5, "    Performing mass erase")
             if device.erase():
@@ -1244,6 +1296,8 @@ def main_cli():
             erase_len = min(erase_len, device.size)
             if device.eraseRange(args.address, erase_len):
                 mdebug(5, "    Erase before write done                 ")
+            else:
+                raise CmdException("Erase before write failed")
             if cmd.writeMemory(args.address, firmware.bytes, args.force):
                 mdebug(5, "    Write done                              ")
             else:
@@ -1278,16 +1332,10 @@ def main_cli():
                 raise CmdException("Set address failed                       ")
 
         if args.read:
-            length = args.len
-
-            # Round up to a 4-byte boundary
-            length = (length + 3) & ~0x03
+            length = read_length
 
             mdebug(5, "Reading %s bytes starting at address 0x%x"
                    % (length, args.address))
-
-            if args.address + length > device.size:
-                mdebug(5, "Warning: reading beyond device size!")
 
             with open(args.file, 'wb') as f:
                 for i in range(0, length >> 2):
