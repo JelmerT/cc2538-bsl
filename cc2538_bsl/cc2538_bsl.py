@@ -1515,6 +1515,18 @@ def check_write(device, address, length, *, force=False, erase_write=False):
     check_flash_bounds(device, address, length, "Write", force)
 
 
+def erase_write_range(device, address, length):
+    """Return the (start, length) erased by -W: every page the image touches.
+
+    Supported chips have whole pages up to the end of flash, and check_write
+    keeps the image inside it. The end is still bounded by the end of flash
+    in case a size is not a whole number of pages.
+    """
+    start = device.page_align_down(address)
+    end = min(device.page_align_up(address + length), device.flash_end)
+    return start, end - start
+
+
 def _check_write_target(device, address, force, erase_write):
     """Reject write addresses the bootloader cannot program as flash.
 
@@ -1830,13 +1842,8 @@ def main_cli():
                         force=args.force, erase_write=args.erase_write)
         write_erase = None
         if args.erase_write:
-            # Cover every page the image touches. check_write keeps the
-            # image inside flash; the clamp covers a last partial page.
-            erase_start = device.page_align_down(args.address)
-            erase_end = min(device.page_align_up(args.address +
-                                                 len(firmware.bytes)),
-                            device.flash_end)
-            write_erase = (erase_start, erase_end - erase_start)
+            write_erase = erase_write_range(device, args.address,
+                                            len(firmware.bytes))
         check_ccfg = not (args.force or args.skip_ccfg_check)
         if check_ccfg and not device.ccfg_known:
             question = guessed_ccfg_question(device, args, ieee_addr)
@@ -1892,7 +1899,7 @@ def main_cli():
 
         if args.erase_write:
             reset_on_failure = False
-            if device.eraseRange(erase_start, erase_end - erase_start):
+            if device.eraseRange(*write_erase):
                 mdebug(5, "    Erase before write done                 ")
             else:
                 raise CmdException("Erase before write failed")

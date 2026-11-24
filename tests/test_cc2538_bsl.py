@@ -1893,3 +1893,14 @@ def test_cli_forced_erase_write_past_flash_end_refused(fake_cli, tmp_path):
         fake_cli("-f", "-W", "-a", str(0xF00), str(fw))
     assert "cannot be erased" in str(exc.value.code)
     assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+@pytest.mark.parametrize("size, address, length, expected", [
+    (0x1000, 0x104, 0x10, (0x100, 0x100)),   # one page
+    (0x1000, 0x1F0, 0x20, (0x100, 0x200)),   # crosses a page boundary
+    (0xF80, 0xF00, 0x40, (0xF00, 0x80)),     # partial last page
+])
+def test_erase_write_range(size, address, length, expected):
+    device = _FakeDevice(_FakeCmd())
+    device.size = size
+    assert bsl.erase_write_range(device, address, length) == expected
