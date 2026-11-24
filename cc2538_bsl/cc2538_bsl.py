@@ -938,9 +938,10 @@ class CC2538(Chip):
         else:
             ieee_addr = ieee_addr_end + ieee_addr
 
-        mdebug(5, "CC2538 PG%d.%d: %dKB Flash, %dKB SRAM, CCFG at 0x%08X"
-               % (pg_major, pg_minor, self.size >> 10, sram,
-                  self.bootloader_address))
+        flash = ("%dKB Flash" % (self.size >> 10) if self.size_known
+                 else "%dKB Flash (guessed)" % (self.size >> 10))
+        mdebug(5, "CC2538 PG%d.%d: %s, %dKB SRAM, CCFG at 0x%08X"
+               % (pg_major, pg_minor, flash, sram, self.bootloader_address))
         mdebug(5, "Primary IEEE Address: %s"
                % (':'.join('%02X' % x for x in ieee_addr)))
 
@@ -1484,7 +1485,8 @@ def check_guessed_flash_end(device, address, length):
             or device.max_flash_size is None):
         return
     max_end = device.flash_start_addr + device.max_flash_size
-    if address < max_end and address + length > device.flash_end:
+    if (device.flash_start_addr <= address < max_end
+            and address + length > device.flash_end):
         raise CmdException("Write 0x%08X-0x%08X reaches past the end of "
                            "flash at 0x%08X, which is a guess (%s), so that "
                            "flash cannot be erased first."

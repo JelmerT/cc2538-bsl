@@ -1676,6 +1676,7 @@ def test_unknown_size_warning_shown_with_quiet(fake_cli, monkeypatch, tmp_path, 
     (0x00210000, 0x1000, True),    # past it, inside the largest flash
     (0x00280000, 0x100, False),    # end of the largest flash
     (0x20000000, 0x100, False),    # RAM
+    (0x001FF000, 0x12000, False),  # starts below flash, left to other checks
 ])
 def test_write_past_guessed_end_refused(address, length, refused):
     device = CC2538.__new__(CC2538)
@@ -1767,3 +1768,13 @@ def test_cc2538_size_warning_for_library_callers():
 
     assert "unknown flash size code 0" in CC2538(Ci()).size_warning()
     assert _FakeDevice(_FakeCmd()).size_warning() is None
+
+
+def test_cc2538_info_line_marks_guessed_size(monkeypatch, capsys):
+    class Ci:
+        def cmdMemRead(self, addr):
+            return bytearray([0x00, 0x00, 0x00, 5 << 4])
+
+    monkeypatch.setattr(bsl, "QUIET", 5)
+    CC2538(Ci())
+    assert "64KB Flash (guessed)" in capsys.readouterr().err
