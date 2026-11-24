@@ -1498,7 +1498,8 @@ def check_write(device, address, length, *, force=False, erase_write=False):
     """Run every check on a write before anything is sent.
 
     The checks --force cannot skip come first, so the later errors do not
-    suggest a --force that cannot help.
+    suggest a --force that cannot help. Returns the range a -W erases, or
+    None without erase_write.
     """
     if address < 0:
         raise CmdException("Write address %d is negative." % address)
@@ -1506,11 +1507,13 @@ def check_write(device, address, length, *, force=False, erase_write=False):
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
                            % address)
     check_guessed_flash_end(device, address, length)
+    erase_range = None
     if erase_write:
         # The page erase only covers flash, so the image must fit inside it
-        erase_write_range(device, address, length)
+        erase_range = erase_write_range(device, address, length)
     _check_write_target(device, address, force, erase_write)
     check_flash_bounds(device, address, length, "Write", force)
+    return erase_range
 
 
 def erase_write_range(device, address, length):
@@ -1551,10 +1554,9 @@ def _check_write_target(device, address, force, erase_write):
     Part of check_write, which also checks alignment and length.
     """
     if not device.flash_start_addr <= address < device.flash_end:
+        # check_write refuses erase-writes outside flash before this
         message = ("Write address 0x%08X is outside flash (0x%08X-0x%08X)."
                    % (address, device.flash_start_addr, device.flash_end))
-        if erase_write:
-            raise CmdException(message + " Erase-write only works on flash.")
         if not force:
             raise CmdException(message + " Use --force to continue anyway.")
         mdebug(5, "Warning: " + message)
@@ -1695,6 +1697,8 @@ def cli_setup():
     parser.add_argument('file', nargs='?', default=None, help='Firmware file to write or verify, or output file for read')
 
     args = parser.parse_args()
+    if args.address is not None and args.address < 0:
+        parser.error('the address given with -a must not be negative')
     if args.port == '':
         parser.error('the serial port given with -p is empty')
     if args.file is None and (args.write or args.erase_write or args.verify
@@ -1855,13 +1859,11 @@ def main_cli():
             erase_range = parse_page_address_range(device, args.erase_page)
             check_erase_range(device, erase_range[0], erase_range[1])
             erase_ranges.append((erase_range[0], erase_range[1]))
-        if args.write or args.erase_write:
-            check_write(device, args.address, len(firmware.bytes),
-                        force=args.force, erase_write=args.erase_write)
         write_erase = None
-        if args.erase_write:
-            write_erase = erase_write_range(device, args.address,
-                                            len(firmware.bytes))
+        if args.write or args.erase_write:
+            write_erase = check_write(device, args.address,
+                                      len(firmware.bytes), force=args.force,
+                                      erase_write=args.erase_write)
         check_ccfg = not (args.force or args.skip_ccfg_check)
         if check_ccfg and not device.ccfg_known:
             question = guessed_ccfg_question(device, args, ieee_addr)

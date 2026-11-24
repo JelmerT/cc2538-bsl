@@ -1913,16 +1913,12 @@ def test_erase_write_range(size, address, length, expected, start):
     (0x1100, 0x10, "is outside flash"),   # past the end
     (0x1000, 0x10, "is outside flash"),   # at the end
     (0xF00, 0x200, "is outside flash"),   # runs past the end
-    (-0x80, 0x100, "is outside flash"),   # starts below flash
-    (-0x200080, 0x100, "is negative"),
     (0x100, 0, "nothing to write"),
 ])
 @pytest.mark.parametrize("start", [0, 0x200000])
 def test_erase_write_range_refuses(address, length, message, start):
     device = _FakeDevice(_FakeCmd())
     device.flash_start_addr = start
-    if start + address < 0:
-        message = "is negative"
     with pytest.raises(bsl.CmdException) as exc:
         bsl.erase_write_range(device, start + address, length)
     assert message in str(exc.value)
@@ -1969,3 +1965,29 @@ def test_check_write_negative_address():
     with pytest.raises(bsl.CmdException) as exc:
         bsl.check_write(_FakeDevice(_FakeCmd()), -4, 4, force=True)
     assert "negative" in str(exc.value)
+
+
+@pytest.mark.parametrize("start, address, message", [
+    (0x200000, 0x1FFF80, "is outside flash"),  # starts below flash
+    (0, -0x80, "is negative"),
+])
+def test_erase_write_range_refuses_below_flash(start, address, message):
+    device = _FakeDevice(_FakeCmd())
+    device.flash_start_addr = start
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.erase_write_range(device, address, 0x100)
+    assert message in str(exc.value)
+
+
+def test_negative_address_rejected_before_connecting(fake_cli, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-r", "-a=-4", str(tmp_path / "out.bin"))
+    assert exc.value.code == 2
+    assert fake_cli.cmd.calls == []
+
+
+def test_check_write_returns_erase_write_range():
+    device = _FakeDevice(_FakeCmd())
+    assert bsl.check_write(device, 0x104, 4, force=True,
+                           erase_write=True) == (0x100, 0x100)
+    assert bsl.check_write(device, 0x104, 4) is None
