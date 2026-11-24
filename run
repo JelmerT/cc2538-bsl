@@ -17,7 +17,8 @@ prepare_firmware() {
   if [ ! -r "${file}" ]; then
     error "Unreadable firmware file '${file}'"
   elif file -b "${file}" | grep -qi ^zip; then
-    unzip "${file}" | sed -nE 's/  inflating: (.+)/\1/p'
+    output="$(unzip -o "${file}")" || error "Could not extract firmware archive '${file}'."
+    printf '%s\n' "${output}" | sed -nE 's/^ *(inflating|extracting): (.+)/\2/p'
   else
     echo "${file}"
   fi

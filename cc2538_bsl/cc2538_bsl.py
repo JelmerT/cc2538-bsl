@@ -47,6 +47,7 @@ import struct
 import binascii
 import traceback
 import argparse
+import subprocess
 
 # version
 __version__ = "2.1"
@@ -688,14 +689,16 @@ class CommandInterface:
             if data[offs:offs+trsf_size] != empty_packet:
                 if addr_set != 1:
                     # set starting address if not set
-                    self.cmdDownload(addr, lng)
+                    if not self.cmdDownload(addr, lng):
+                        return 0
                     addr_set = 1
                 mdebug(5, " Write %(len)d bytes at 0x%(addr)08X"
                        % {'addr': addr, 'len': trsf_size}, '\r')
                 sys.stdout.flush()
 
                 # send next data packet
-                self.cmdSendData(data[offs:offs+trsf_size])
+                if not self.cmdSendData(data[offs:offs+trsf_size]):
+                    return 0
             else:   # skipped packet, address needs to be set
                 addr_set = 0
 
@@ -705,7 +708,8 @@ class CommandInterface:
 
         mdebug(5, "Write %(len)d bytes at 0x%(addr)08X" % {'addr': addr,
                                                            'len': lng})
-        self.cmdDownload(addr, lng)
+        if not self.cmdDownload(addr, lng):
+            return 0
         return self.cmdSendData(data[offs:offs+lng])  # send last data packet
 
 
@@ -760,7 +764,6 @@ class CC2538(Chip):
     def __init__(self, command_interface):
         super().__init__(command_interface)
         self.flash_start_addr = 0x00200000
-        self.addr_ieee_address_secondary = 0x0027ffcc
         self.has_cmd_set_xosc = True
         self.bootloader_dis_val = 0xefffffff
         self.crc_cmd = "cmdCRC32"
@@ -778,6 +781,8 @@ class CC2538(Chip):
         else:
             self.size = 0x10000  # in bytes
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
+        self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
+                                            ccfg_len - 8)
 
         sram = (((model[2] << 8) | model[3]) & 0x380) >> 7
         sram = (2 - sram) << 3 if sram <= 1 else 32  # in KB
@@ -1060,8 +1065,7 @@ def parse_page_address_range(device, pg_range):
     if values[0].isalpha():
         values[0] = values[0].lower()
         if values[0] == 'p' or values[0] == 'page':
-            if values[0] == 'p':
-                values[1:] = device.page_to_addr(values[1:])
+            values[1:] = device.page_to_addr(values[1:])
         elif values[0] != 'a' and values[0] != 'address':
             raise ValueError("Prefix is neither a(address) or p(page)")
         page_addr.extend(_parse_range_values(device, values[1:]))
@@ -1092,7 +1096,12 @@ def get_read_length(device, address, requested, force=False):
     if requested is not None:
         length = requested
     elif device.flash_start_addr <= address < device.flash_end:
-        length = device.flash_end - address
+        # Whole words only, so the default never crosses the end of flash
+        length = (device.flash_end - address) & ~0x03
+        if not length:
+            raise CmdException("Less than one 4-byte word left to read at "
+                               "0x%08X." % address)
+        return length
     else:
         length = DEFAULT_READ_LEN
 
@@ -1101,14 +1110,34 @@ def get_read_length(device, address, requested, force=False):
     return length
 
 
+def reset_target(cmd):
+    """Leave the bootloader without hiding the error being reported."""
+    try:
+        cmd.cmdReset()
+    except Exception as err:
+        mdebug(5, "Warning: could not reset target: %s" % err)
+
+
 def version():
     # Use the installed package's version, set from git tags at build time.
     try:
         from importlib.metadata import version as package_version
         return package_version('cc2538-bsl')
     except Exception:
-        # Not installed, or Python < 3.8: use fixed version string.
-        return __version__
+        pass
+
+    # Not installed: use this checkout's tags, never those of the current dir.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.exists(os.path.join(root, '.git')):
+        try:
+            output = subprocess.check_output(
+                ['git', '-C', root, 'describe', '--tags', '--match', '[0-9]*'],
+                stderr=subprocess.DEVNULL)
+            return output.decode('utf-8').strip()
+        except Exception:
+            pass
+
+    return __version__
 
 
 def cli_setup():
@@ -1139,6 +1168,13 @@ def cli_setup():
     if args.file is None and (args.write or args.erase_write or args.verify
                               or args.read):
         parser.error('a file is required with -w, -W, -v or -r')
+    # Connecting pulses the reset lines, so never do it on an auto-selected
+    # port unless an operation was requested.
+    if args.file is None and args.port is None and not (
+            args.erase or args.erase_page or args.ieee_address is not None
+            or args.disable_bootloader):
+        parser.error('no operation requested; use -p PORT to only identify '
+                     'the target')
 
     return args
 
@@ -1188,6 +1224,13 @@ def main_cli():
             firmware = FirmwareFile(args.file)
             if not firmware.bytes:
                 raise Exception('Firmware file %s is empty.' % args.file)
+            if (args.write or args.erase_write) and len(firmware.bytes) % 4:
+                raise Exception('Firmware size %d is not a multiple of 4.'
+                                % len(firmware.bytes))
+
+        ieee_addr = None
+        if args.ieee_address is not None:
+            ieee_addr = parse_ieee_address(args.ieee_address)
 
         # Try and find the port automatically
         if not args.port:
@@ -1238,7 +1281,7 @@ def main_cli():
             device = CC2538(cmd)
 
         # Choose a good default address unless the user specified -a
-        if not args.address:
+        if args.address is None:
             args.address = device.flash_start_addr
 
         if not force_speed and device.has_cmd_set_xosc:
@@ -1258,12 +1301,28 @@ def main_cli():
                                    "source. (Try forcing speed)")
 
         # Check sizes before the first destructive operation
-        if args.write or args.erase_write:
-            check_flash_bounds(device, args.address, len(firmware.bytes),
-                               "Write", args.force)
-        if args.read:
-            read_length = get_read_length(device, args.address, args.len,
-                                          args.force)
+        try:
+            if args.erase_page:
+                erase_range = parse_page_address_range(device, args.erase_page)
+            if args.write or args.erase_write:
+                check_flash_bounds(device, args.address, len(firmware.bytes),
+                                   "Write", args.force)
+            if args.erase_write:
+                if not (device.flash_start_addr <= args.address
+                        < device.flash_end):
+                    raise CmdException("Erase-write address 0x%08X is outside "
+                                       "flash." % args.address)
+                # Cover every page the image touches
+                erase_start = device.page_align_down(args.address)
+                erase_end = min(device.page_align_up(args.address +
+                                                     len(firmware.bytes)),
+                                device.flash_end)
+            if args.read:
+                read_length = get_read_length(device, args.address, args.len,
+                                              args.force)
+        except Exception:
+            reset_target(cmd)
+            raise
 
         if args.erase:
             mdebug(5, "    Performing mass erase")
@@ -1273,7 +1332,6 @@ def main_cli():
                 raise CmdException("Erase failed")
 
         if args.erase_page:
-            erase_range = parse_page_address_range(device, args.erase_page)
             mdebug(5, "    Performing partial erase")
             if device.eraseRange(erase_range[0], erase_range[1]):
                 mdebug(5, "    Partial erase done                  ")
@@ -1291,10 +1349,7 @@ def main_cli():
         if args.erase_write:
             # TODO: check if boot loader back-door is open, need to read
             #       flash size first to get address
-            # Round up to ensure page alignment
-            erase_len = device.page_align_up(len(firmware.bytes))
-            erase_len = min(erase_len, device.size)
-            if device.eraseRange(args.address, erase_len):
+            if device.eraseRange(erase_start, erase_end - erase_start):
                 mdebug(5, "    Erase before write done                 ")
             else:
                 raise CmdException("Erase before write failed")
@@ -1317,8 +1372,7 @@ def main_cli():
                 raise Exception("NO CRC32 match: Local = 0x%x, "
                                 "Target = 0x%x" % (crc_local, crc_target))
 
-        if args.ieee_address != 0 and args.ieee_address is not None:
-            ieee_addr = parse_ieee_address(args.ieee_address)
+        if ieee_addr is not None:
             mdebug(5, "Setting IEEE address to %s"
                        % (':'.join(['%02x' % b
                                     for b in struct.pack('>Q', ieee_addr)])))
