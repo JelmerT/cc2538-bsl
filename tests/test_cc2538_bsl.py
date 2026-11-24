@@ -1900,7 +1900,16 @@ def test_cli_forced_erase_write_past_flash_end_refused(fake_cli, tmp_path):
     (0x1000, 0x1F0, 0x20, (0x100, 0x200)),   # crosses a page boundary
     (0xF80, 0xF00, 0x40, (0xF00, 0x80)),     # partial last page
 ])
-def test_erase_write_range(size, address, length, expected):
+@pytest.mark.parametrize("start", [0, 0x200000])
+def test_erase_write_range(size, address, length, expected, start):
     device = _FakeDevice(_FakeCmd())
     device.size = size
-    assert bsl.erase_write_range(device, address, length) == expected
+    device.flash_start_addr = start
+    assert (bsl.erase_write_range(device, start + address, length)
+            == (start + expected[0], expected[1]))
+
+
+@pytest.mark.parametrize("address, length", [(0x1100, 0x10), (0x100, 0)])
+def test_erase_write_range_refuses_empty(address, length):
+    with pytest.raises(bsl.CmdException):
+        bsl.erase_write_range(_FakeDevice(_FakeCmd()), address, length)

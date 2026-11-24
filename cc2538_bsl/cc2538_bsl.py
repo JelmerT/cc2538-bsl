@@ -1524,6 +1524,9 @@ def erase_write_range(device, address, length):
     """
     start = device.page_align_down(address)
     end = min(device.page_align_up(address + length), device.flash_end)
+    if length <= 0 or end <= start:
+        raise CmdException("Erase-write range 0x%08X-0x%08X is not inside "
+                           "flash." % (address, address + length))
     return start, end - start
 
 
