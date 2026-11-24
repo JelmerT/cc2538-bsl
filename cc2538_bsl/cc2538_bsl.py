@@ -756,7 +756,7 @@ class Chip:
         addresses = []
         for page in pages:
             addresses.append(int(self.flash_start_addr) +
-                             int(page)*self.page_size)
+                             _parse_range_number(page) * self.page_size)
         return addresses
 
     ccfg_known = True  # False when the CCFG address is only a guess
@@ -1212,14 +1212,27 @@ def parse_ieee_address(inaddr):
     return addr
 
 
+def parse_number(value):
+    """Parse a decimal or 0x-prefixed integer, with an optional sign.
+
+    The only number format the command line accepts. Raises ValueError.
+    """
+    match = re.fullmatch(r'([+-]?)(?:0[xX]([0-9a-fA-F]{1,16})|([0-9]{1,20}))',
+                         value.strip())
+    if not match:
+        raise ValueError("expected a decimal or 0x-prefixed integer, got %r"
+                         % value)
+    sign, hex_digits, dec_digits = match.groups()
+    number = int(hex_digits, 16) if hex_digits else int(dec_digits, 10)
+    return -number if sign == '-' else number
+
+
 def _parse_range_number(value):
-    """Parse an int, 0x-prefixed hex, or decimal."""
-    if isinstance(value, int):
-        return value
-    text = value.strip().lower()
-    if text.startswith('0x'):
-        return int(text, 16)
-    return int(text, 10)
+    """Parse a non-negative int, 0x-prefixed hex, or decimal for -E."""
+    number = value if isinstance(value, int) else parse_number(value)
+    if number < 0:
+        raise ValueError("%r is negative" % value)
+    return number
 
 
 def _parse_range_values(device, values):
@@ -1674,13 +1687,10 @@ class _VersionAction(argparse.Action):
 
 def parse_int(value):
     """Parse a decimal or 0x-prefixed integer for -a, -l and -b."""
-    match = re.fullmatch(r'(-?)(?:0[xX]([0-9a-fA-F]+)|([0-9]+))', value)
-    if not match:
-        raise argparse.ArgumentTypeError(
-            "expected a decimal or 0x-prefixed integer, got %r" % value)
-    sign, hex_digits, dec_digits = match.groups()
-    number = int(hex_digits, 16) if hex_digits else int(dec_digits, 10)
-    return -number if sign else number
+    try:
+        return parse_number(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err))
 
 
 def cli_setup():

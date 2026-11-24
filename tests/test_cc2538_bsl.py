@@ -1997,13 +1997,15 @@ def test_bad_options_rejected_before_connecting(fake_cli, tmp_path, capsys,
 
 @pytest.mark.parametrize("value, expected", [
     ("0x00200000", 0x200000), ("2097152", 0x200000), ("0100", 100),
-    ("0X10", 16), ("-4", -4), ("-0x10", -16),
+    ("0X10", 16), ("-4", -4), ("-0x10", -16), ("+115200", 115200),
+    (" 0x10 ", 16),
 ])
 def test_parse_int(value, expected):
     assert bsl.parse_int(value) == expected
 
 
-@pytest.mark.parametrize("value", ["0b100", "0o17", "1_000", "zz", "", "0x"])
+@pytest.mark.parametrize("value", ["0b100", "0o17", "1_000", "zz", "", "0x",
+                                   "1" * 5000, "0x" + "f" * 17])
 def test_parse_int_rejects(value):
     with pytest.raises(argparse.ArgumentTypeError):
         bsl.parse_int(value)
@@ -2027,3 +2029,20 @@ def test_check_write_returns_erase_write_range():
     assert bsl.check_write(device, 0x104, 4, force=True,
                            erase_write=True) == (0x100, 0x100)
     assert bsl.check_write(device, 0x104, 4) is None
+
+
+def test_negative_hex_address_with_space_rejected(fake_cli, tmp_path):
+    # argparse reads "-0x10" as an option; still a usage error, no device I/O
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-r", "-a", "-0x10", str(tmp_path / "out.bin"))
+    assert exc.value.code == 2
+    assert fake_cli.cmd.calls == []
+
+
+@pytest.mark.parametrize("pg_range", [
+    "a,4_096,8_192", "a,-4096", "p,1_0", "p,-1", "a,0x_1000",
+])
+def test_erase_range_numbers_match_cli_format(pg_range):
+    device = _FakeDevice(_FakeCmd())
+    with pytest.raises(ValueError):
+        bsl.parse_page_address_range(device, pg_range)
