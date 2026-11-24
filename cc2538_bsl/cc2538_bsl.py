@@ -1497,20 +1497,21 @@ def check_guessed_flash_end(device, address, length):
 def check_write(device, address, length, *, force=False, erase_write=False):
     """Run every check on a write before anything is sent.
 
-    Alignment and the guessed end of flash come first, so the later errors
-    do not suggest a --force that cannot help.
+    The checks --force cannot skip come first, so the later errors do not
+    suggest a --force that cannot help.
     """
     if address % 4:
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
                            % address)
     check_guessed_flash_end(device, address, length)
-    _check_write_target(device, address, force, erase_write)
-    if erase_write and address + length > device.flash_end:
+    if (erase_write and device.flash_start_addr <= address < device.flash_end
+            and address + length > device.flash_end):
         # The page erase stops at the end of flash, so the rest would be
         # written over old data
         raise CmdException("Erase-write of %d bytes at 0x%08X runs past the "
                            "end of flash (0x%08X), which cannot be erased."
                            % (length, address, device.flash_end))
+    _check_write_target(device, address, force, erase_write)
     check_flash_bounds(device, address, length, "Write", force)
 
 
@@ -1829,11 +1830,11 @@ def main_cli():
                         force=args.force, erase_write=args.erase_write)
         write_erase = None
         if args.erase_write:
-            # Cover every page the image touches
+            # Cover every page the image touches. check_write keeps this
+            # inside flash.
             erase_start = device.page_align_down(args.address)
-            erase_end = min(device.page_align_up(args.address +
-                                                 len(firmware.bytes)),
-                            device.flash_end)
+            erase_end = device.page_align_up(args.address +
+                                             len(firmware.bytes))
             write_erase = (erase_start, erase_end - erase_start)
         check_ccfg = not (args.force or args.skip_ccfg_check)
         if check_ccfg and not device.ccfg_known:

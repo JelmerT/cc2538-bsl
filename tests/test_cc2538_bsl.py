@@ -1877,3 +1877,19 @@ def test_check_write_skips_guess_without_max_flash_size():
 def test_check_write_flags_are_keyword_only():
     with pytest.raises(TypeError):
         bsl.check_write(_known_flash_device(), 0, 4, True)
+
+
+def test_check_write_erase_write_past_end_before_page_alignment():
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.check_write(_known_flash_device(), 0xF04, 0x200, erase_write=True)
+    assert "cannot be erased" in str(exc.value)
+    assert "--force" not in str(exc.value)
+
+
+def test_cli_forced_erase_write_past_flash_end_refused(fake_cli, tmp_path):
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x200)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-f", "-W", "-a", str(0xF00), str(fw))
+    assert "cannot be erased" in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "reset"]
