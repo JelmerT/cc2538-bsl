@@ -1500,17 +1500,15 @@ def check_write(device, address, length, *, force=False, erase_write=False):
     The checks --force cannot skip come first, so the later errors do not
     suggest a --force that cannot help.
     """
+    if address < 0:
+        raise CmdException("Write address %d is negative." % address)
     if address % 4:
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
                            % address)
     check_guessed_flash_end(device, address, length)
-    if (erase_write and device.flash_start_addr <= address < device.flash_end
-            and address + length > device.flash_end):
-        # The page erase stops at the end of flash, so the rest would be
-        # written over old data
-        raise CmdException("Erase-write of %d bytes at 0x%08X runs past the "
-                           "end of flash (0x%08X), which cannot be erased."
-                           % (length, address, device.flash_end))
+    if erase_write:
+        # The page erase only covers flash, so the image must fit inside it
+        erase_write_range(device, address, length)
     _check_write_target(device, address, force, erase_write)
     check_flash_bounds(device, address, length, "Write", force)
 
@@ -1522,13 +1520,15 @@ def erase_write_range(device, address, length):
     flash, or if its first page would start below flash. The end is bounded
     by the end of flash in case the size is not a whole number of pages.
     """
+    if address < 0:
+        raise CmdException("Erase-write address %d is negative." % address)
     if length <= 0:
         raise CmdException("Erase-write of %d bytes at 0x%08X: nothing to "
                            "write." % (length, address))
     if (address < device.flash_start_addr
             or address + length > device.flash_end):
-        message = ("Erase-write 0x%08X-0x%08X (%d bytes) does not fit "
-                   "inside flash (0x%08X-0x%08X)"
+        message = ("Erase-write 0x%08X-0x%08X (%d bytes) is outside "
+                   "flash (0x%08X-0x%08X)"
                    % (address, address + length, length,
                       device.flash_start_addr, device.flash_end))
         if not device.size_known:

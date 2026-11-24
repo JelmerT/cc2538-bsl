@@ -1865,7 +1865,7 @@ def test_check_write_erase_write_past_flash_end_refused(force):
     with pytest.raises(bsl.CmdException) as exc:
         bsl.check_write(_known_flash_device(), 0xF00, 0x200, force=force,
                         erase_write=True)
-    assert "cannot be erased" in str(exc.value)
+    assert "is outside flash" in str(exc.value)
 
 
 def test_check_write_skips_guess_without_max_flash_size():
@@ -1882,7 +1882,7 @@ def test_check_write_flags_are_keyword_only():
 def test_check_write_erase_write_past_end_before_page_alignment():
     with pytest.raises(bsl.CmdException) as exc:
         bsl.check_write(_known_flash_device(), 0xF04, 0x200, erase_write=True)
-    assert "cannot be erased" in str(exc.value)
+    assert "is outside flash" in str(exc.value)
     assert "--force" not in str(exc.value)
 
 
@@ -1891,7 +1891,7 @@ def test_cli_forced_erase_write_past_flash_end_refused(fake_cli, tmp_path):
     fw.write_bytes(b"\x01" * 0x200)
     with pytest.raises(SystemExit) as exc:
         fake_cli("-f", "-W", "-a", str(0xF00), str(fw))
-    assert "cannot be erased" in str(exc.value.code)
+    assert "is outside flash" in str(exc.value.code)
     assert fake_cli.cmd.calls == ["open", "reset"]
 
 
@@ -1910,16 +1910,19 @@ def test_erase_write_range(size, address, length, expected, start):
 
 
 @pytest.mark.parametrize("address, length, message", [
-    (0x1100, 0x10, "does not fit inside flash"),   # past the end
-    (0x1000, 0x10, "does not fit inside flash"),   # at the end
-    (0xF00, 0x200, "does not fit inside flash"),   # runs past the end
-    (-0x80, 0x100, "does not fit inside flash"),   # starts below flash
+    (0x1100, 0x10, "is outside flash"),   # past the end
+    (0x1000, 0x10, "is outside flash"),   # at the end
+    (0xF00, 0x200, "is outside flash"),   # runs past the end
+    (-0x80, 0x100, "is outside flash"),   # starts below flash
+    (-0x200080, 0x100, "is negative"),
     (0x100, 0, "nothing to write"),
 ])
 @pytest.mark.parametrize("start", [0, 0x200000])
 def test_erase_write_range_refuses(address, length, message, start):
     device = _FakeDevice(_FakeCmd())
     device.flash_start_addr = start
+    if start + address < 0:
+        message = "is negative"
     with pytest.raises(bsl.CmdException) as exc:
         bsl.erase_write_range(device, start + address, length)
     assert message in str(exc.value)
@@ -1944,3 +1947,25 @@ def test_erase_write_range_messages_name_address_and_guess():
     with pytest.raises(bsl.CmdException) as exc:
         bsl.erase_write_range(device, 0x2000, 0)
     assert "at 0x00002000" in str(exc.value)
+
+
+def test_erase_write_range_unaligned_flash_start_later_page():
+    device = _FakeDevice(_FakeCmd())
+    device.flash_start_addr = 0x80
+    device.size = 0xF00  # flash 0x80-0xF80, last page partial
+    assert bsl.erase_write_range(device, 0x180, 0x10) == (0x100, 0x100)
+    assert bsl.erase_write_range(device, 0xF00, 0x40) == (0xF00, 0x80)
+
+
+def test_check_write_unaligned_flash_start_refused_before_force_hint():
+    device = _FakeDevice(_FakeCmd())
+    device.flash_start_addr = 0x80
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.check_write(device, 0x80, 0x10, erase_write=True)
+    assert "not on a 256 byte page boundary" in str(exc.value)
+
+
+def test_check_write_negative_address():
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.check_write(_FakeDevice(_FakeCmd()), -4, 4, force=True)
+    assert "negative" in str(exc.value)
