@@ -677,7 +677,7 @@ class CommandInterface:
 
         # Boot loader enable check for a full CC2538 512K image. The CLI
         # checks images with ccfg_write_question before erasing, unless
-        # --force is given.
+        # --force or --skip-ccfg-check is given.
         if lng == 524288 and addr == 0x00200000:
             # check the boot loader enable bit  (only for 512K model)
             if not ((data[524247] & (1 << 4)) >> 4):
@@ -1147,7 +1147,9 @@ def query_yes_no(question, default="yes"):
             choice = input().lower()
         except EOFError:
             raise Exception("No answer to a confirmation prompt (input is "
-                            "closed). Use --force to skip prompts.")
+                            "closed). Use --skip-ccfg-check to skip the "
+                            "CCFG, lockout and IEEE address questions, or "
+                            "--force to skip all prompts and some checks.")
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
@@ -1258,9 +1260,15 @@ def guessed_ccfg_question(device, args, ieee_addr):
         parts.append("-D writes the boot loader word at the guessed "
                      "address 0x%08X, which may hold application code"
                      % device.bootloader_address)
-    if args.erase and not device.size_known:
-        parts.append("-e erases only the guessed %d KB of flash"
-                     % (device.size >> 10))
+    if not device.size_known:
+        if args.erase:
+            parts.append("-e erases only the guessed %d KB of flash"
+                         % (device.size >> 10))
+        if args.erase_page is not None:
+            parts.append("-E ranges are checked against the guessed size")
+        if args.read and args.len is None:
+            parts.append("-r without -l reads only the guessed %d KB"
+                         % (device.size >> 10))
     if not parts:
         return None
     return ("%s, so the location of its CCFG (%d KB of flash) is a guess: "
@@ -1766,7 +1774,7 @@ def main_cli():
         if (args.write or args.erase_write) and check_ccfg \
                 and device.ccfg_known:
             # Only asks questions, and may read the target, so skip it
-            # entirely when forced
+            # entirely with --force or --skip-ccfg-check
             question = ccfg_write_question(device, firmware.bytes,
                                            args.address, erase_ranges,
                                            write_erase,

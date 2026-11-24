@@ -1371,6 +1371,7 @@ def test_closed_input_at_prompt_mentions_force(monkeypatch):
     with pytest.raises(Exception) as exc:
         bsl.query_yes_no("Continue?", "no")
     assert "--force" in str(exc.value)
+    assert "--skip-ccfg-check" in str(exc.value)
 
 
 def test_interrupted_reset_warning_has_reason(capsys):
@@ -1635,6 +1636,20 @@ def test_cc2538_unknown_size_mass_erase_asks():
     device.ccfg_known = False
     device.size_known = False
     args = type("Args", (), {"write": False, "erase_write": False,
-                             "disable_bootloader": False, "erase": True})()
+                             "disable_bootloader": False, "erase": True,
+                             "erase_page": "a,0x0,0x100", "read": True,
+                             "len": None})()
     question = bsl.guessed_ccfg_question(device, args, None)
     assert "-e erases only the guessed 4 KB" in question
+    assert "-E ranges" in question
+    assert "-r without -l" in question
+
+
+def test_unknown_size_read_with_length_does_not_ask():
+    device = _FakeDevice(_FakeCmd())
+    device.ccfg_known = False
+    device.size_known = False
+    args = type("Args", (), {"write": False, "erase_write": False,
+                             "disable_bootloader": False, "erase": False,
+                             "erase_page": None, "read": True, "len": 16})()
+    assert bsl.guessed_ccfg_question(device, args, None) is None
