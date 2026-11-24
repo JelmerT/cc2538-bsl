@@ -48,6 +48,7 @@ import binascii
 import traceback
 import argparse
 import subprocess
+import tempfile
 
 # version
 __version__ = "2.1"
@@ -656,26 +657,11 @@ class CommandInterface:
 
 # Complex commands section
 
-    def writeMemory(self, addr, data, force=False):
+    def writeMemory(self, addr, data):
         lng = len(data)
         # amount of data bytes transferred per packet (theory: max 252 + 3)
         trsf_size = 248
         empty_packet = bytearray((0xFF,) * trsf_size)
-
-        # Boot loader enable check
-        # TODO: implement check for all chip sizes & take into account partial
-        # firmware uploads
-        if (lng == 524288):  # check if file is for 512K model
-            # check the boot loader enable bit  (only for 512K model)
-            if not ((data[524247] & (1 << 4)) >> 4):
-                if not (force or
-                        query_yes_no("The boot loader backdoor is not enabled "
-                                     "in the firmware you are about to write "
-                                     "to the target. You will NOT be able to "
-                                     "reprogram the target using this tool if "
-                                     "you continue! "
-                                     "Do you want to continue?", "no")):
-                    raise Exception('Aborted by user.')
 
         mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)08X" %
                {'lng': lng, 'addr': addr})
@@ -708,7 +694,11 @@ class CommandInterface:
 
         mdebug(5, "Write %(len)d bytes at 0x%(addr)08X" % {'addr': addr,
                                                            'len': lng})
-        if not self.cmdDownload(addr, lng):
+        # While a transfer is in progress this Download is redundant. It is
+        # still sent to keep the bytes on the wire unchanged, but only a
+        # Download that starts a transfer has to succeed.
+        download_ok = self.cmdDownload(addr, lng)
+        if addr_set != 1 and not download_ok:
             return 0
         return self.cmdSendData(data[offs:offs+lng])  # send last data packet
 
@@ -740,6 +730,14 @@ class Chip:
             addresses.append(int(self.flash_start_addr) +
                              int(page)*self.page_size)
         return addresses
+
+    def image_disables_bootloader(self, image, address):
+        """Return True if the image's CCFG would lock out this bootloader."""
+        offset = self.bootloader_address - address
+        if not 0 <= offset <= len(image) - 4:
+            return False  # the image does not contain the CCFG word
+        word = struct.unpack('<L', bytes(image[offset:offset + 4]))[0]
+        return not self._bootloader_enabled(word)
 
     def crc(self, address, size):
         return getattr(self.command_interface, self.crc_cmd)(address, size)
@@ -808,6 +806,9 @@ class CC2538(Chip):
                   self.bootloader_address))
         mdebug(5, "Primary IEEE Address: %s"
                % (':'.join('%02X' % x for x in ieee_addr)))
+
+    def _bootloader_enabled(self, word):
+        return bool(word & (1 << 28))
 
     def erase(self):
         return self.eraseRange(self.flash_start_addr, self.size)
@@ -966,6 +967,10 @@ class CC26xx(Chip):
             pg_str = "PG2.%d" % (rev_minor,)
 
         return "%s %s" % (chip_str, pg_str)
+
+    def _bootloader_enabled(self, word):
+        # CCFG.BL_CONFIG.BOOTLOADER_ENABLE
+        return (word >> 24) == 0xC5
 
     def erase(self):
         mdebug(5, "Erasing all main bank flash sectors")
@@ -1152,6 +1157,46 @@ def get_read_length(device, address, requested, force=False):
     return length
 
 
+def check_output_path(path):
+    """Fail before any device access if the read output cannot be saved."""
+    path = os.path.realpath(path)
+    if os.path.isdir(path):
+        raise Exception('Output path %s is a directory.' % path)
+    if os.path.exists(path) and not os.access(path, os.W_OK):
+        raise Exception('Output file %s is not writable.' % path)
+    try:
+        with tempfile.TemporaryFile(dir=os.path.dirname(path)):
+            pass
+    except OSError as err:
+        raise Exception('Cannot write output file %s: %s' % (path, err))
+
+
+def write_file_atomic(path, data):
+    """Replace path with data only once data is safely on disk."""
+    path = os.path.realpath(path)
+    directory, name = os.path.split(path)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.%s.' % name)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            mode = os.stat(path).st_mode & 0o7777
+        except FileNotFoundError:
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def reset_target(cmd):
     """Leave the bootloader without hiding the error being reported."""
     try:
@@ -1165,7 +1210,8 @@ def _is_own_checkout(root):
     if not os.path.exists(os.path.join(root, '.git')):
         return False
     try:
-        with open(os.path.join(root, 'pyproject.toml')) as f:
+        with open(os.path.join(root, 'pyproject.toml'), encoding='utf-8',
+                  errors='replace') as f:
             return any(line.strip() == 'name = "cc2538-bsl"' for line in f)
     except OSError:
         return False
@@ -1185,12 +1231,20 @@ def version():
         try:
             output = subprocess.check_output(
                 ['git', '-C', root, 'describe', '--tags', '--match', '[0-9]*'],
-                stderr=subprocess.DEVNULL)
+                stderr=subprocess.DEVNULL, timeout=5)
             return output.decode('utf-8').strip()
         except Exception:
             pass
 
     return __version__
+
+
+class _VersionAction(argparse.Action):
+    """Print the version, resolving it only when --version is used."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        sys.stdout.write('%s %s\n' % (parser.prog, version()))
+        parser.exit()
 
 
 def cli_setup():
@@ -1200,7 +1254,7 @@ def cli_setup():
     parser.add_argument('-V', action='store_true', help='Verbose')
     parser.add_argument('-f', '--force', action='store_true', help='Force operation(s) without asking any questions')
     parser.add_argument('-e', '--erase', action='store_true', help='Mass erase')
-    parser.add_argument('-E', '--erase-page', help='Receives an address(a) range or page(p) range, default is address(a) eg: -E a,0x00000000,0x00001000, -E p,1,4')
+    parser.add_argument('-E', '--erase-page', help='Receives an absolute address(a) range or page(p) range, default is address(a) eg: -E p,1,4, -E a,0x00001000,0x00003000 (CC2538 flash starts at 0x00200000)')
     parser.add_argument('-w', '--write', action='store_true', help='Write')
     parser.add_argument('-W', '--erase-write', action='store_true', help='Write after erasing section to write to (avoids a mass erase). Rounds up section to erase if not page aligned.')
     parser.add_argument('-v', '--verify', action='store_true', help='Verify (CRC32 check)')
@@ -1214,7 +1268,7 @@ def cli_setup():
     parser.add_argument('--bootloader-invert-lines', action='store_true', help='Inverts the use of RTS and DTR to enter bootloader')
     parser.add_argument('--bootloader-sonoff-usb', action='store_true', help='Toggles RTS and DTR in the correct pattern for Sonoff USB dongle')
     parser.add_argument('-D', '--disable-bootloader', action='store_true', help='After finishing, disable the bootloader')
-    parser.add_argument('--version', action='version', version='%(prog)s ' + version())
+    parser.add_argument('--version', action=_VersionAction, nargs=0, help="show program's version number and exit")
     parser.add_argument('file', nargs='?', default=None, help='Firmware file to write or verify, or output file for read')
 
     args = parser.parse_args()
@@ -1223,8 +1277,8 @@ def cli_setup():
         parser.error('a file is required with -w, -W, -v or -r')
     # Connecting pulses the reset lines, so never do it on an auto-selected
     # port unless an operation was requested.
-    if args.port is None and not (
-            args.erase or args.erase_page or args.write or args.erase_write
+    if not args.port and not (
+            args.erase or args.erase_page is not None or args.write or args.erase_write
             or args.verify or args.read or args.ieee_address is not None
             or args.disable_bootloader):
         parser.error('no operation requested; use -p PORT to only identify '
@@ -1248,6 +1302,9 @@ def main_cli():
         QUIET = 10
     elif args.q:
         QUIET = 0
+
+    # Set once the target has answered in its bootloader
+    bootloader_active = False
 
     try:
         if (args.write and args.read) or (args.erase_write and args.read):
@@ -1286,6 +1343,9 @@ def main_cli():
         if args.ieee_address is not None:
             ieee_addr = parse_ieee_address(args.ieee_address)
 
+        if args.read:
+            check_output_path(args.file)
+
         # Try and find the port automatically
         if not args.port:
             ports = []
@@ -1319,6 +1379,7 @@ def main_cli():
         if not cmd.sendSynch():
             raise CmdException("Can't connect to target. Ensure boot loader "
                                "is started. (no answer on synch sequence)")
+        bootloader_active = True
 
         # if (cmd.cmdPing() != 1):
         #     raise CmdException("Can't connect to target. Ensure boot loader "
@@ -1355,27 +1416,33 @@ def main_cli():
                                    "source. (Try forcing speed)")
 
         # Check sizes before the first destructive operation
-        try:
-            if args.erase_page:
-                erase_range = parse_page_address_range(device, args.erase_page)
-                check_erase_range(device, erase_range[0], erase_range[1])
-            if args.write or args.erase_write:
-                check_write_target(device, args.address,
-                                   args.force and not args.erase_write)
-                check_flash_bounds(device, args.address, len(firmware.bytes),
-                                   "Write", args.force)
-            if args.erase_write:
-                # Cover every page the image touches
-                erase_start = device.page_align_down(args.address)
-                erase_end = min(device.page_align_up(args.address +
-                                                     len(firmware.bytes)),
-                                device.flash_end)
-            if args.read:
-                read_length = get_read_length(device, args.address, args.len,
-                                              args.force)
-        except Exception:
-            reset_target(cmd)
-            raise
+        if args.erase_page is not None:
+            erase_range = parse_page_address_range(device, args.erase_page)
+            check_erase_range(device, erase_range[0], erase_range[1])
+        if args.write or args.erase_write:
+            check_write_target(device, args.address,
+                               args.force and not args.erase_write)
+            check_flash_bounds(device, args.address, len(firmware.bytes),
+                               "Write", args.force)
+            if (device.image_disables_bootloader(firmware.bytes, args.address)
+                    and not (args.force or
+                             query_yes_no("The boot loader backdoor is not "
+                                          "enabled in the firmware you are "
+                                          "about to write to the target. You "
+                                          "will NOT be able to reprogram the "
+                                          "target using this tool if you "
+                                          "continue! Do you want to continue?",
+                                          "no"))):
+                raise Exception('Aborted by user.')
+        if args.erase_write:
+            # Cover every page the image touches
+            erase_start = device.page_align_down(args.address)
+            erase_end = min(device.page_align_up(args.address +
+                                                 len(firmware.bytes)),
+                            device.flash_end)
+        if args.read:
+            read_length = get_read_length(device, args.address, args.len,
+                                          args.force)
 
         if args.erase:
             mdebug(5, "    Performing mass erase")
@@ -1384,7 +1451,7 @@ def main_cli():
             else:
                 raise CmdException("Erase failed")
 
-        if args.erase_page:
+        if args.erase_page is not None:
             mdebug(5, "    Performing partial erase")
             if device.eraseRange(erase_range[0], erase_range[1]):
                 mdebug(5, "    Partial erase done                  ")
@@ -1394,7 +1461,7 @@ def main_cli():
         if args.write:
             # TODO: check if boot loader back-door is open, need to read
             #       flash size first to get address
-            if cmd.writeMemory(args.address, firmware.bytes, args.force):
+            if cmd.writeMemory(args.address, firmware.bytes):
                 mdebug(5, "    Write done                                ")
             else:
                 raise CmdException("Write failed                       ")
@@ -1406,7 +1473,7 @@ def main_cli():
                 mdebug(5, "    Erase before write done                 ")
             else:
                 raise CmdException("Erase before write failed")
-            if cmd.writeMemory(args.address, firmware.bytes, args.force):
+            if cmd.writeMemory(args.address, firmware.bytes):
                 mdebug(5, "    Write done                              ")
             else:
                 raise CmdException("Write failed                       ")
@@ -1418,10 +1485,12 @@ def main_cli():
             # CRC of target will change according to length input file
             crc_target = device.crc(args.address, len(firmware.bytes))
 
+            if crc_target is None:
+                raise CmdException("CRC read failed: could not verify flash")
+
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
             else:
-                reset_target(cmd)
                 raise Exception("NO CRC32 match: Local = 0x%x, "
                                 "Target = 0x%x" % (crc_local, crc_target))
 
@@ -1453,18 +1522,20 @@ def main_cli():
                        % (args.address + (i * 4), rdata[0], rdata[1],
                           rdata[2], rdata[3]), '\r')
                 read_data += rdata
-            with open(args.file, 'wb') as f:
-                f.write(read_data)
+            write_file_atomic(args.file, read_data)
             mdebug(5, "    Read done                                ")
 
         if args.disable_bootloader:
             device.disable_bootloader(args.force)
 
+        bootloader_active = False
         cmd.cmdReset()
 
     except Exception as err:
         if QUIET >= 10:
             traceback.print_exc()
+        if bootloader_active:
+            reset_target(cmd)
         exit('ERROR: %s' % str(err))
 
 if __name__ == "__main__":
