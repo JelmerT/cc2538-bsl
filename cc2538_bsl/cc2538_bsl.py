@@ -47,9 +47,7 @@ import struct
 import binascii
 import traceback
 import argparse
-import errno
 import subprocess
-import tempfile
 
 # version
 __version__ = "2.1"
@@ -746,7 +744,8 @@ class Chip:
                              int(page)*self.page_size)
         return addresses
 
-    def image_disables_bootloader(self, image, address):
+    def image_disables_bootloader(self, image, address,
+                                  erases_bl_config=False):
         """Return True if the image's CCFG would lock out this bootloader."""
         offset = self.bootloader_address - address
         if not 0 <= offset <= len(image) - 4:
@@ -990,13 +989,18 @@ class CC26xx(Chip):
         # CCFG.BL_CONFIG: BOOTLOADER_ENABLE and BL_ENABLE (backdoor)
         return (word >> 24) == 0xC5 and (word & 0xFF) == 0xC5
 
-    def image_disables_bootloader(self, image, address):
+    def image_disables_bootloader(self, image, address,
+                                  erases_bl_config=False):
         # An all-0xFF CCFG region means the image carries no CCFG settings
         ccfg_offset = self.bootloader_address - 0x30 - address
         start = max(ccfg_offset, 0)
         end = min(ccfg_offset + 88, len(image))
-        if start < end and all(b == 0xFF for b in image[start:end]):
+        if start >= end or all(b == 0xFF for b in image[start:end]):
             return False
+        # CCFG settings without BL_CONFIG: an erase would leave it disabled
+        bl_offset = self.bootloader_address - address
+        if not 0 <= bl_offset <= len(image) - 4:
+            return erases_bl_config
         return super().image_disables_bootloader(image, address)
 
     def erase(self):
@@ -1127,6 +1131,13 @@ def parse_page_address_range(device, pg_range):
         return [page_addr[0], (page_addr[1] - page_addr[0])]
 
 
+def erase_covers_bootloader_config(device, ranges):
+    """Return True if any (start, length) range includes the BL_CONFIG word."""
+    return any(start < device.bootloader_address + 4
+               and device.bootloader_address < start + length
+               for start, length in ranges)
+
+
 def check_erase_range(device, start, length):
     """Reject an erase range that is empty or not entirely inside flash."""
     if length <= 0:
@@ -1186,64 +1197,20 @@ def get_read_length(device, address, requested, force=False):
 
 def check_output_path(path):
     """Fail before any device access if the read output cannot be saved."""
-    path = os.path.realpath(path)
     if os.path.isdir(path):
         raise Exception('Output path %s is a directory.' % path)
     if os.path.exists(path):
         if not os.access(path, os.W_OK):
             raise Exception('Output file %s is not writable.' % path)
         return
+    # A dangling symlink is created at its target
+    probe = os.path.realpath(path) if os.path.islink(path) else path
     try:
-        # Exercise the real name and location, without touching existing data
-        with open(path, 'xb'):
+        with open(probe, 'xb'):
             pass
-        os.unlink(path)
+        os.unlink(probe)
     except OSError as err:
         raise Exception('Cannot write output file %s: %s' % (path, err))
-
-
-def _write_synced(path, data):
-    with open(path, 'wb') as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-
-
-def save_read_output(path, data):
-    """Save a dump in place, keeping a temp copy until the save succeeds.
-
-    Writing in place keeps the file's owner, links, and type. The temp copy
-    means a full disk fails before the existing file is touched.
-    """
-    path = os.path.realpath(path)
-    if os.path.exists(path) and not os.path.isfile(path):
-        _write_synced(path, data)  # device node or FIFO
-        return
-
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path),
-                                        prefix='.cc2538-bsl-')
-    except OSError as err:
-        if err.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
-            raise
-        _write_synced(path, data)  # no temp file possible in this directory
-        return
-
-    try:
-        with os.fdopen(fd, 'wb') as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-    except Exception:
-        os.unlink(tmp_path)
-        raise
-
-    try:
-        _write_synced(path, data)
-    except Exception as err:
-        raise Exception('Could not save %s: %s. The data read is in %s.'
-                        % (path, err, tmp_path))
-    os.unlink(tmp_path)
 
 
 def reset_target(cmd):
@@ -1468,15 +1435,29 @@ def main_cli():
                                    "source. (Try forcing speed)")
 
         # Check sizes before the first destructive operation
+        erase_ranges = []
+        if args.erase:
+            erase_ranges.append((device.flash_start_addr, device.size))
         if args.erase_page is not None:
             erase_range = parse_page_address_range(device, args.erase_page)
             check_erase_range(device, erase_range[0], erase_range[1])
+            erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
             check_write_target(device, args.address,
                                args.force and not args.erase_write)
             check_flash_bounds(device, args.address, len(firmware.bytes),
                                "Write", args.force)
-            if (device.image_disables_bootloader(firmware.bytes, args.address)
+        if args.erase_write:
+            # Cover every page the image touches
+            erase_start = device.page_align_down(args.address)
+            erase_end = min(device.page_align_up(args.address +
+                                                 len(firmware.bytes)),
+                            device.flash_end)
+            erase_ranges.append((erase_start, erase_end - erase_start))
+        if args.write or args.erase_write:
+            if (device.image_disables_bootloader(
+                        firmware.bytes, args.address,
+                        erase_covers_bootloader_config(device, erase_ranges))
                     and not (args.force or
                              query_yes_no("The boot loader backdoor is not "
                                           "enabled in the firmware you are "
@@ -1486,12 +1467,6 @@ def main_cli():
                                           "continue! Do you want to continue?",
                                           "no"))):
                 raise Exception('Aborted by user.')
-        if args.erase_write:
-            # Cover every page the image touches
-            erase_start = device.page_align_down(args.address)
-            erase_end = min(device.page_align_up(args.address +
-                                                 len(firmware.bytes)),
-                            device.flash_end)
         if args.disable_bootloader:
             device.confirm_disable_bootloader(args.force)
         if args.read:
@@ -1572,7 +1547,7 @@ def main_cli():
             mdebug(5, "Reading %s bytes starting at address 0x%x"
                    % (length, args.address))
 
-            # Keep any existing output file until the whole read succeeds
+            # Only touch the output file once the whole read has succeeded
             read_data = bytearray()
             for i in range(0, length >> 2):
                 # reading 4 bytes at a time
@@ -1581,7 +1556,8 @@ def main_cli():
                        % (args.address + (i * 4), rdata[0], rdata[1],
                           rdata[2], rdata[3]), '\r')
                 read_data += rdata
-            save_read_output(args.file, read_data)
+            with open(args.file, 'wb') as f:
+                f.write(read_data)
             mdebug(5, "    Read done                                ")
 
         if args.disable_bootloader:

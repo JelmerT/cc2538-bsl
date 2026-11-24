@@ -11,6 +11,7 @@ Two layers:
 import os
 import sys
 import binascii
+import shutil
 import subprocess
 
 import pytest
@@ -61,6 +62,7 @@ def test_version_output():
     assert result.stdout.strip()
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 def test_version_ignores_git_repo_in_cwd(tmp_path):
     git = ["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid"]
     subprocess.run(git + ["init", "-q"], cwd=str(tmp_path), check=True)
@@ -952,36 +954,6 @@ def test_failed_verify_with_pending_ieee_resets(fake_cli, monkeypatch, tmp_path)
     assert fake_cli.cmd.calls == ["open", "reset"]
 
 
-def test_full_disk_keeps_existing_output(monkeypatch, tmp_path):
-    out = tmp_path / "out.bin"
-    out.write_bytes(b"keep")
-
-    def no_space(fd):
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(bsl.os, "fsync", no_space)
-    with pytest.raises(OSError):
-        bsl.save_read_output(str(out), b"new data")
-    assert out.read_bytes() == b"keep"
-    assert [p.name for p in tmp_path.iterdir()] == ["out.bin"]
-
-
-def test_failed_in_place_save_keeps_recovery_copy(monkeypatch, tmp_path):
-    out = tmp_path / "out.bin"
-    out.write_bytes(b"keep")
-
-    def fail(path, data):
-        raise OSError(5, "I/O error")
-
-    monkeypatch.setattr(bsl, "_write_synced", fail)
-    with pytest.raises(Exception) as exc:
-        bsl.save_read_output(str(out), b"new data")
-    recovery = [p for p in tmp_path.iterdir() if p.name != "out.bin"]
-    assert len(recovery) == 1
-    assert recovery[0].read_bytes() == b"new data"
-    assert str(recovery[0]) in str(exc.value)
-
-
 def test_read_to_device_node_stays_a_device(fake_cli):
     fake_cli("-r", "-l", "16", os.devnull)
     assert not os.path.isfile(os.devnull)
@@ -1022,3 +994,58 @@ def test_write_memory_guard_only_for_cc2538_image(monkeypatch, addr, prompted):
     image[524247] = 0xEF
     assert ci.writeMemory(addr, image)
     assert bool(questions) is prompted
+
+
+def test_read_to_pipe(fake_cli):
+    read_fd, write_fd = os.pipe()
+    try:
+        fake_cli("-r", "-l", "16", "/dev/fd/%d" % write_fd)
+        assert os.read(read_fd, 32) == b"\xAA\xBB\xCC\xDD" * 4
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def _ccfg_tail_device():
+    device = CC26xx.__new__(CC26xx)
+    device.bootloader_address = 0x130  # CCFG at 0x100-0x158
+    return device
+
+
+def test_ccfg_tail_warns_when_erase_wipes_bl_config():
+    image = bytearray(0x10)
+    device = _ccfg_tail_device()
+    assert device.image_disables_bootloader(image, 0x134, True) is True
+    assert device.image_disables_bootloader(image, 0x134, False) is False
+
+
+def test_blank_ccfg_tail_does_not_warn():
+    image = bytearray(b"\xFF" * 0x10)
+    assert _ccfg_tail_device().image_disables_bootloader(
+        image, 0x134, True) is False
+
+
+def test_app_image_before_ccfg_does_not_warn_on_mass_erase():
+    assert _ccfg_tail_device().image_disables_bootloader(
+        bytearray(0x80), 0, True) is False
+
+
+@pytest.mark.parametrize("options, covered", [
+    (["-w", "-a", str(0xFDC)], False),
+    (["-W", "-a", str(0xFDC)], True),
+    (["-e", "-w", "-a", str(0xFDC)], True),
+    (["-E", "a,0xF00,0x1000", "-w", "-a", str(0xFDC)], True),
+    (["-E", "a,0x100,0x200", "-w", "-a", str(0xFDC)], False),
+])
+def test_cli_reports_erased_bl_config(fake_cli, monkeypatch, tmp_path, options, covered):
+    seen = []
+
+    def record(self, image, address, erases_bl_config=False):
+        seen.append(erases_bl_config)
+        return False
+
+    monkeypatch.setattr(_FakeDevice, "image_disables_bootloader", record)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 8)
+    fake_cli(*options, str(fw))
+    assert seen == [covered]
