@@ -1674,6 +1674,7 @@ def test_unknown_size_warning_shown_with_quiet(fake_cli, monkeypatch, tmp_path, 
     (0x00200000, 0x10000, False),  # inside the guessed 64 KB
     (0x0020F000, 0x2000, True),    # crosses the guessed end
     (0x00210000, 0x1000, True),    # past it, inside the largest flash
+    (0x00280000, 0x100, False),    # end of the largest flash
     (0x20000000, 0x100, False),    # RAM
 ])
 def test_write_past_guessed_end_refused(address, length, refused):
@@ -1697,3 +1698,16 @@ def test_erase_range_error_names_guessed_size():
     with pytest.raises(ValueError) as exc:
         bsl.check_erase_range(device, 0x1000, 0x100)
     assert "unknown flash size code 6" in str(exc.value)
+
+
+def test_cli_forced_write_past_guessed_end_refused(fake_cli, monkeypatch, tmp_path):
+    monkeypatch.setattr(_FakeDevice, "size_known", False, raising=False)
+    monkeypatch.setattr(_FakeDevice, "size_code", 5, raising=False)
+    monkeypatch.setattr(_FakeDevice, "max_flash_size", 0x80000, raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x200)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-f", "-e", "-w", "-a", str(0xF00), str(fw))
+    assert "which is a guess" in str(exc.value.code)
+    assert "--force to continue" not in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "reset"]

@@ -903,9 +903,7 @@ class CC2538(Chip):
             # the end of flash (and CCFG) is a guess
             self.ccfg_known = False
             self.size_known = False
-            self.size_code = (model[3] & 0x70) >> 4
-            mdebug(5, "Warning: unknown flash size code %d, assuming 64 KB"
-                      % self.size_code)
+            self.size_code = (model[3] & 0x70) >> 4  # main_cli warns
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -1793,12 +1791,14 @@ def main_cli():
             check_erase_range(device, erase_range[0], erase_range[1])
             erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
+            # First, so the checks below do not suggest a --force that
+            # cannot help
+            check_guessed_flash_end(device, args.address,
+                                    len(firmware.bytes))
             check_write_target(device, args.address, args.force,
                                args.erase_write)
             check_flash_bounds(device, args.address, len(firmware.bytes),
                                "Write", args.force)
-            check_guessed_flash_end(device, args.address,
-                                    len(firmware.bytes))
         write_erase = None
         if args.erase_write:
             # Cover every page the image touches
