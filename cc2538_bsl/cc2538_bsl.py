@@ -47,6 +47,7 @@ import struct
 import binascii
 import traceback
 import argparse
+import re
 import subprocess
 
 # version
@@ -364,9 +365,15 @@ class CommandInterface:
         # if not got:
         #     raise CmdException("No response to %s" % info)
 
+        if len(got) < 2:
+            raise CmdException("No response packet from target")
+        if got[0] < 2:
+            raise CmdException("Invalid response packet size %d" % got[0])
         size = got[0]  # rcv size
         chks = got[1]  # rcv checksum
         data = bytearray(self._read(size - 2))  # rcv data
+        if len(data) != max(size - 2, 0):
+            raise CmdException("Incomplete response packet from target")
 
         mdebug(10, "*** received %x bytes" % size)
         if chks == sum(data) & 0xFF:
@@ -444,8 +451,9 @@ class CommandInterface:
             # 4 byte answ, the 2 LSB hold chip ID
             version = self.receivePacket()
             if self.checkLastCmd():
-                assert len(version) == 4, ("Unreasonable chip "
-                                           "id: %s" % repr(version))
+                if len(version) != 4:
+                    raise CmdException("Unreasonable chip id: %s"
+                                       % repr(version))
                 mdebug(10, "    Version 0x%02X%02X%02X%02X" % tuple(version))
                 chip_id = (version[2] << 8) | version[3]
                 return chip_id
@@ -543,6 +551,9 @@ class CommandInterface:
         if self._wait_for_ack("Get CRC32 (0x27)", 1):
             crc = self.receivePacket()
             if self.checkLastCmd():
+                if len(crc) != 4:
+                    raise CmdException("Unexpected CRC32 reply length %d"
+                                       % len(crc))
                 return self._decode_addr(crc[3], crc[2], crc[1], crc[0])
 
     def cmdCRC32CC26xx(self, addr, size):
@@ -560,6 +571,9 @@ class CommandInterface:
         if self._wait_for_ack("Get CRC32 (0x27)", 1):
             crc = self.receivePacket()
             if self.checkLastCmd():
+                if len(crc) != 4:
+                    raise CmdException("Unexpected CRC32 reply length %d"
+                                       % len(crc))
                 return self._decode_addr(crc[3], crc[2], crc[1], crc[0])
 
     def cmdDownload(self, addr, size):
@@ -662,8 +676,9 @@ class CommandInterface:
         trsf_size = 248
         empty_packet = bytearray((0xFF,) * trsf_size)
 
-        # Boot loader enable check for a full CC2538 512K image. The CLI uses
-        # the size-aware Chip.image_disables_bootloader before erasing.
+        # Boot loader enable check for a full CC2538 512K image. The CLI
+        # checks images with ccfg_write_question before erasing, unless
+        # --force or --skip-ccfg-check is given.
         if lng == 524288 and addr == 0x00200000:
             # check the boot loader enable bit  (only for 512K model)
             if not ((data[524247] & (1 << 4)) >> 4):
@@ -741,8 +756,24 @@ class Chip:
         addresses = []
         for page in pages:
             addresses.append(int(self.flash_start_addr) +
-                             int(page)*self.page_size)
+                             _parse_range_number(page) * self.page_size)
         return addresses
+
+    ccfg_known = True  # False when the CCFG address is only a guess
+    size_known = True  # False when the flash size is only a guess
+    size_code = None   # the undocumented size code behind a guessed size
+    max_flash_size = None  # largest flash the chip family can have
+
+    def size_warning(self):
+        """Return a warning when the flash size is a guess, else None.
+
+        The constructor does not print it; main_cli does, and other callers
+        should check it after creating the device.
+        """
+        if self.size_known:
+            return None
+        return ("Warning: %s. Reads, erases and range checks use this size."
+                % guessed_size_note(self))
 
     def ccfg_range(self):
         """Return the (address, length) of the CCFG area."""
@@ -760,12 +791,80 @@ class Chip:
         end = min(ccfg_addr + ccfg_len - address, len(image))
         return start < end and any(b != 0xFF for b in image[start:end])
 
-    def image_disables_bootloader(self, image, address):
-        """Return True if the image's CCFG would lock out this bootloader."""
-        offset = self.bootloader_address - address
-        if not 0 <= offset <= len(image) - 4:
-            return False  # the image does not contain the CCFG word
-        word = struct.unpack('<L', bytes(image[offset:offset + 4]))[0]
+    BLANK_WORD = b'\xFF' * 4
+
+    def image_bootloader_bytes(self, image, address):
+        """Return {index: byte} for the boot loader word bytes in the image."""
+        found = {}
+        for i in range(4):
+            offset = self.bootloader_address + i - address
+            if 0 <= offset < len(image):
+                found[i] = image[offset]
+        return found
+
+    def image_covers_bootloader_word(self, image, address):
+        return len(self.image_bootloader_bytes(image, address)) == 4
+
+    def read_ccfg(self):
+        """Return the bytes of the CCFG area on the chip."""
+        ccfg_addr, ccfg_len = self.ccfg_range()
+        data = bytearray()
+        for addr in range(ccfg_addr, ccfg_addr + ccfg_len, 4):
+            word = self.read_memory(addr)
+            if word is None or len(word) != 4:
+                raise CmdException("Short read at address 0x%08X" % addr)
+            data += word
+        return bytes(data)
+
+    def ccfg_bits_lost(self, image, address, chip_ccfg):
+        """Return the CCFG addresses where the chip has bits cleared that
+        the image wants set, which a write without erase cannot set.
+
+        Image bytes of 0xFF in the IEEE address fields are left out: there
+        0xFF means unset, and -i may have programmed an address.
+        """
+        ccfg_addr, ccfg_len = self.ccfg_range()
+        ieee = [range(a, a + n) for a, n in self.ccfg_address_fields()]
+        lost = []
+        for i in range(ccfg_len):
+            offset = ccfg_addr + i - address
+            if not 0 <= offset < len(image):
+                continue
+            if image[offset] == 0xFF and any(ccfg_addr + i in r for r in ieee):
+                continue
+            if chip_ccfg[i] & image[offset] != image[offset]:
+                lost.append(ccfg_addr + i)
+        return lost
+
+    def ccfg_address_fields(self):
+        """Return (address, length) of the IEEE address fields in CCFG."""
+        return []  # CC2538 keeps its secondary address outside CCFG
+
+    def bootloader_word_after_write(self, image, address, start):
+        """Return the boot loader word the chip holds after the write.
+
+        start is the word before the write: BLANK_WORD after an erase, or
+        the bytes on the chip, because flash writes can only clear bits.
+        """
+        word = bytearray(start)
+        for i, value in self.image_bootloader_bytes(image, address).items():
+            word[i] &= value
+        return struct.unpack('<L', bytes(word))[0]
+
+    def image_disables_bootloader(self, image, address, start=None):
+        """Return True if writing the image would lock out this bootloader.
+
+        start is the boot loader word before the write, as for
+        bootloader_word_after_write; None means BLANK_WORD. An image that
+        programs no CCFG byte leaves CCFG blank after an erase, which makes
+        the image invalid so the ROM bootloader runs, and leaves it
+        unchanged otherwise.
+        """
+        if not self.image_has_ccfg(image, address):
+            return False
+        if start is None:
+            start = self.BLANK_WORD
+        word = self.bootloader_word_after_write(image, address, start)
         return not self._bootloader_enabled(word)
 
     def crc(self, address, size):
@@ -791,6 +890,8 @@ class Chip:
 
 
 class CC2538(Chip):
+    max_flash_size = 0x80000
+
     def __init__(self, command_interface):
         super().__init__(command_interface)
         self.flash_start_addr = 0x00200000
@@ -810,6 +911,11 @@ class CC2538(Chip):
             self.size *= 0x20000  # in bytes
         else:
             self.size = 0x10000  # in bytes
+            # Code 0 and the reserved codes 5-7 are not documented sizes, so
+            # the end of flash (and CCFG) is a guess
+            self.ccfg_known = False
+            self.size_known = False
+            self.size_code = (model[3] & 0x70) >> 4  # see size_warning()
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -833,9 +939,11 @@ class CC2538(Chip):
         else:
             ieee_addr = ieee_addr_end + ieee_addr
 
-        mdebug(5, "CC2538 PG%d.%d: %dKB Flash, %dKB SRAM, CCFG at 0x%08X"
-               % (pg_major, pg_minor, self.size >> 10, sram,
-                  self.bootloader_address))
+        flash = ("%dKB Flash" % (self.size >> 10) if self.size_known
+                 else "%dKB Flash (guessed, size code %d)"
+                 % (self.size >> 10, self.size_code))
+        mdebug(5, "CC2538 PG%d.%d: %s, %dKB SRAM, CCFG at 0x%08X"
+               % (pg_major, pg_minor, flash, sram, self.bootloader_address))
         mdebug(5, "Primary IEEE Address: %s"
                % (':'.join('%02X' % x for x in ieee_addr)))
 
@@ -854,7 +962,7 @@ class CC2538(Chip):
         # CC2538's COMMAND_MEMORY_READ sends each 4-byte number in inverted
         # byte order compared to what's written on the device
         data = self.command_interface.cmdMemRead(addr)
-        if data is None:
+        if data is None or len(data) != 4:
             raise CmdException("Read failed at address 0x%08X" % addr)
         return bytearray([data[x] for x in range(3, -1, -1)])
 
@@ -916,6 +1024,9 @@ class CC26xx(Chip):
             # crashing with an UnboundLocalError. See issues #150, #153.
             chip = "Unknown (wafer_id=0x%X)" % wafer_id
             self.page_size = 8192
+            # CC13x4/CC26x4-class parts keep CCFG outside main flash, so
+            # its address here is a guess
+            self.ccfg_known = False
             mdebug(5, "Warning: unrecognized wafer_id 0x%X, assuming a "
                       "CC13xx/CC26xx-class part with %d byte flash pages. "
                       "Flashing may not work correctly; please report this "
@@ -1007,15 +1118,10 @@ class CC26xx(Chip):
     def ccfg_range(self):
         return self.bootloader_address - 0x30, 88
 
-    def image_disables_bootloader(self, image, address):
-        if not self.image_has_ccfg(image, address):
-            return False
-        # CCFG settings without a usable BL_CONFIG: the word on the chip may
-        # already be blank, so treat a missing or blank word as disabled.
-        bl_offset = self.bootloader_address - address
-        if not 0 <= bl_offset <= len(image) - 4:
-            return True
-        return super().image_disables_bootloader(image, address)
+    def ccfg_address_fields(self):
+        # CCFG.IEEE_MAC_0/1 (set by -i) and CCFG.IEEE_BLE_0/1
+        ccfg_addr = self.ccfg_range()[0]
+        return [(ccfg_addr + 0x20, 8), (ccfg_addr + 0x28, 8)]
 
     def erase(self):
         mdebug(5, "Erasing all main bank flash sectors")
@@ -1034,12 +1140,19 @@ class CC26xx(Chip):
         # CC26xx COMMAND_MEMORY_READ returns contents in the same order as
         # they are stored on the device
         data = self.command_interface.cmdMemReadCC26xx(addr)
-        if data is None:
+        if data is None or len(data) != 4:
             raise CmdException("Read failed at address 0x%08X" % addr)
         return data
 
 
-def query_yes_no(question, default="yes"):
+SKIP_CCFG_HINT = ("Use --skip-ccfg-check to skip the CCFG, lockout and IEEE "
+                  "address questions (and the -e question on a chip with a "
+                  "guessed flash size), or --force to skip all prompts and "
+                  "some checks.")
+
+
+def query_yes_no(question, default="yes",
+                 skip_hint="Use --force to skip prompts."):
     valid = {"yes": True,
              "y": True,
              "ye": True,
@@ -1060,7 +1173,7 @@ def query_yes_no(question, default="yes"):
             choice = input().lower()
         except EOFError:
             raise Exception("No answer to a confirmation prompt (input is "
-                            "closed). Use --force to skip prompts.")
+                            "closed). " + skip_hint)
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
@@ -1099,14 +1212,27 @@ def parse_ieee_address(inaddr):
     return addr
 
 
+def parse_number(value):
+    """Parse a decimal or 0x-prefixed integer, with an optional sign.
+
+    The only number format the command line accepts. Raises ValueError.
+    """
+    match = re.fullmatch(r'([+-]?)(?:0[xX]([0-9a-fA-F]{1,16})|([0-9]{1,20}))',
+                         value.strip())
+    if not match:
+        raise ValueError("expected a decimal or 0x-prefixed integer, got %r"
+                         % value)
+    sign, hex_digits, dec_digits = match.groups()
+    number = int(hex_digits, 16) if hex_digits else int(dec_digits, 10)
+    return -number if sign == '-' else number
+
+
 def _parse_range_number(value):
-    """Parse an int, 0x-prefixed hex, or decimal."""
-    if isinstance(value, int):
-        return value
-    text = value.strip().lower()
-    if text.startswith('0x'):
-        return int(text, 16)
-    return int(text, 10)
+    """Parse a non-negative int, 0x-prefixed hex, or decimal for -E."""
+    number = value if isinstance(value, int) else parse_number(value)
+    if number < 0:
+        raise ValueError("%r is negative" % value)
+    return number
 
 
 def _parse_range_values(device, values):
@@ -1152,27 +1278,299 @@ def ranges_overlap(ranges, start, length):
                for r_start, r_length in ranges)
 
 
+def guessed_ccfg_question(device, args, ieee_addr):
+    """Return the question for a chip whose CCFG location is a guess, or
+    None when no write, -i, -D or (with a guessed size) -e is requested."""
+    if device.size_known:
+        reason = "This chip was not recognised"
+    else:
+        reason = "The flash size this chip reports is not documented"
+    parts = []
+    if args.write or args.erase_write:
+        parts.append("the write may reach CCFG, and the boot loader "
+                     "lockout check cannot run")
+    if ieee_addr is not None:
+        parts.append("-i writes the IEEE address at the guessed address "
+                     "0x%08X, which may hold application code"
+                     % device.addr_ieee_address_secondary)
+    if args.disable_bootloader:
+        parts.append("-D writes the boot loader word at the guessed "
+                     "address 0x%08X, which may hold application code"
+                     % device.bootloader_address)
+    if args.erase and not device.size_known:
+        parts.append("-e erases only the guessed %d KB of flash"
+                     % (device.size >> 10))
+    if not parts:
+        return None
+    return ("%s, so the location of its CCFG (%d KB of flash) is a guess: "
+            "%s. Pass --skip-ccfg-check to skip this question. Do you want "
+            "to continue?" % (reason, device.size >> 10, "; ".join(parts)))
+
+
+def ieee_write_question(device, ieee_bytes, image, address, erase_ranges):
+    """Return the question to ask before -i writes the IEEE address, or None.
+
+    The address is written without its own erase, so it is ANDed with the
+    bytes on the chip after any erase and image write in this run.
+    erase_ranges are all erases in this run, including the -W one. image
+    is None without a write.
+    """
+    ieee_addr = device.addr_ieee_address_secondary
+    ieee_page = device.page_align_down(ieee_addr)
+    if image is not None and ranges_overlap([(address, len(image))],
+                                            ieee_page, device.page_size):
+        hint = ("Erase its flash page first with -e, -W, or an -E range "
+                "that covers it.")
+    elif image is not None:
+        hint = ("Erase its flash page first with -e or an -E range that "
+                "covers it.")
+    else:
+        hint = ("Erase its flash page first with an -E range that covers "
+                "it, and write that page again.")
+    if ranges_overlap(erase_ranges, ieee_addr, len(ieee_bytes)):
+        start = bytearray(b'\xFF' * len(ieee_bytes))
+    else:
+        try:
+            start = bytearray()
+            for addr in range(ieee_addr, ieee_addr + len(ieee_bytes), 4):
+                start += device.read_memory(addr)
+        except (CmdException, serial.SerialException) as err:
+            raise CmdException("Could not read the IEEE address area from "
+                               "the target to check the -i write (%s). %s "
+                               "or pass --skip-ccfg-check."
+                               % (err, hint.rstrip('.') + ','))
+    if image is not None:
+        for i in range(len(start)):
+            offset = ieee_addr + i - address
+            if 0 <= offset < len(image):
+                start[i] &= image[offset]
+    if all(start[i] & b == b for i, b in enumerate(ieee_bytes)):
+        return None
+    return ("The IEEE address area at 0x%08X on the target already has bits "
+            "cleared that this write cannot set, so the address stored "
+            "will not be the one given with -i. %s Do you want to "
+            "continue?" % (ieee_addr, hint))
+
+
+def ccfg_write_question(device, image, address, erase_ranges, write_erase,
+                        disabling=False):
+    """Return the question to ask before a write changes CCFG, or None.
+
+    erase_ranges are the erases asked for with -e or -E. write_erase is
+    the page range -W erases, or None. disabling is set for -D, which
+    asks about the lockout itself. Asks at most one question, with a
+    lockout taking priority over a firmware that will not boot.
+    """
+    ccfg_addr, ccfg_len = device.ccfg_range()
+    explicit = ranges_overlap(erase_ranges, ccfg_addr, ccfg_len)
+    implicit = (write_erase is not None
+                and ranges_overlap([write_erase], ccfg_addr, ccfg_len))
+    # Erase ranges are page aligned (_parse_range_values, page_align_*) and
+    # CCFG sits in the last page, so any erase that touches CCFG clears all
+    # of it, including the boot loader word.
+    erased = explicit or implicit
+    erase_hint = (" Erase the CCFG page first with -e, -W, or an -E range "
+                  "that covers it.")
+    lockout = (" You will NOT be able to reprogram the target using this "
+               "tool if you continue! Do you want to continue?")
+    caveat = (" If the target then holds a valid image, you will NOT be "
+              "able to reprogram it using this tool! Do you want to "
+              "continue?")
+    lost = []
+    bl_lost = False
+    if erased:
+        start = device.BLANK_WORD
+    elif ranges_overlap([(address, len(image))], ccfg_addr, ccfg_len):
+        # Without an erase the write is ANDed with CCFG on the chip
+        try:
+            chip_ccfg = device.read_ccfg()
+        except (CmdException, serial.SerialException) as err:
+            # The link may be out of step after a failed read, so stop
+            raise CmdException("Could not read CCFG from the target to "
+                               "check this write without erase (%s). Erase "
+                               "the CCFG page first with -e, -W, or an -E "
+                               "range that covers it, or pass "
+                               "--skip-ccfg-check." % err)
+        bl_offset = device.bootloader_address - ccfg_addr
+        start = chip_ccfg[bl_offset:bl_offset + 4]
+        lost = device.ccfg_bits_lost(image, address, chip_ccfg)
+        # When the image sets an enabled word, its pin and level bytes
+        # matter even where they are 0xFF, so check every byte of the word.
+        # A blank image word leaves the chip word as it is, and a disabled
+        # one is handled by the lockout check.
+        image_word = device.bootloader_word_after_write(
+            image, address, device.BLANK_WORD)
+        bl_lost = (device.image_covers_bootloader_word(image, address)
+                   and image_word != 0xFFFFFFFF
+                   and device._bootloader_enabled(image_word)
+                   and any(start[i] & value != value for i, value in
+                           device.image_bootloader_bytes(image,
+                                                         address).items()))
+    else:
+        start = None  # CCFG stays as it is
+    # The boot loader word has its own checks: bl_lost and the lockout one
+    bl_word = range(device.bootloader_address, device.bootloader_address + 4)
+    lost = [a for a in lost if a not in bl_word]
+    if disabling:
+        # -D replaces the boot loader word and asks about it itself
+        bl_lost = False
+    if (not disabling and start is not None
+            and device.image_disables_bootloader(image, address, start)):
+        image_word = device.bootloader_word_after_write(
+            image, address, device.BLANK_WORD)
+        if (device.image_covers_bootloader_word(image, address)
+                and not device._bootloader_enabled(image_word)):
+            return ("The boot loader backdoor is not enabled in the "
+                    "firmware you are about to write to the target." + lockout)
+        if bl_lost:
+            return ("The boot loader word on the target has bits cleared "
+                    "that a write without erase cannot set, so the boot "
+                    "loader backdoor will not be enabled." + erase_hint
+                    + lockout)
+        if not erased and device._bootloader_enabled(
+                struct.unpack('<L', bytes(start))[0]):
+            return ("The boot loader configuration in the firmware you are "
+                    "about to write disables the backdoor that is enabled "
+                    "on the target." + lockout)
+        # The image does not fully set the word. Whether the ROM boot loader
+        # still runs then depends on the rest of CCFG, which is not checked.
+        if erased:
+            return ("This erase clears the boot loader configuration in "
+                    "CCFG and the firmware you are about to write does not "
+                    "fully restore it." + caveat)
+        return ("The boot loader backdoor is not enabled on the target and "
+                "the firmware you are about to write does not enable it."
+                + caveat)
+    if bl_lost:
+        return ("The boot loader word on the target has bits cleared that "
+                "a write without erase cannot set, so the backdoor pin or "
+                "level will differ from the firmware and you may not be able "
+                "to enter the boot loader." + erase_hint
+                + " Do you want to continue?")
+    if lost:
+        return ("CCFG on the target has bits cleared at %s that a write "
+                "without erase cannot set, so CCFG will not match the "
+                "firmware." % ", ".join(
+                    "0x%08X" % a for a in sorted(set(a & ~3 for a in lost)))
+                + erase_hint + " Do you want to continue?")
+    if not erased:
+        return None
+    has_ccfg = device.image_has_ccfg(image, address)
+    if has_ccfg and device.image_covers_ccfg(image, address):
+        return None
+    if has_ccfg:
+        return ("This erase includes the CCFG area and the image only "
+                "restores part of it. The firmware may not boot until the "
+                "rest of CCFG is written. Do you want to continue?")
+    if explicit:
+        return None  # an app-only image after an erase that was asked for
+    return ("The -W erase includes the CCFG area and the image does not "
+            "restore it. The firmware will not boot until CCFG is written. "
+            "Do you want to continue?")
+
+
+def guessed_size_note(device):
+    """Describe a guessed flash size for messages."""
+    code = ("unknown flash size code %d" % device.size_code
+            if device.size_code is not None else "unknown flash size")
+    return "%s, assuming %d KB" % (code, device.size >> 10)
+
+
 def check_erase_range(device, start, length):
     """Reject an erase range that is empty or not entirely inside flash."""
     if length <= 0:
         raise ValueError("Erase range end must be after its start")
     if start < device.flash_start_addr or start + length > device.flash_end:
-        raise ValueError("Erase range 0x%08X-0x%08X is outside flash "
-                         "(0x%08X-0x%08X)" % (start, start + length,
-                                              device.flash_start_addr,
-                                              device.flash_end))
+        message = ("Erase range 0x%08X-0x%08X is outside flash "
+                   "(0x%08X-0x%08X)" % (start, start + length,
+                                        device.flash_start_addr,
+                                        device.flash_end))
+        if not device.size_known:
+            message += " (%s)" % guessed_size_note(device)
+        raise ValueError(message)
 
 
-def check_write_target(device, address, force=False, erase_write=False):
-    """Reject write addresses the bootloader cannot program as flash."""
+def check_guessed_flash_end(device, address, length):
+    """Refuse a write that reaches past a guessed end of flash.
+
+    Flash there cannot be erased, because erases stop at the guessed end,
+    so the write would be ANDed with old data. --force does not apply.
+    """
+    if (length <= 0 or device.size_known
+            or device.max_flash_size is None):
+        return
+    max_end = device.flash_start_addr + device.max_flash_size
+    if address < max_end and address + length > device.flash_end:
+        raise CmdException("Write 0x%08X-0x%08X reaches past the end of "
+                           "flash at 0x%08X, which is a guess (%s), so that "
+                           "flash cannot be erased first."
+                           % (address, address + length, device.flash_end,
+                              guessed_size_note(device)))
+
+
+def check_write(device, address, length, *, force=False, erase_write=False):
+    """Run every check on a write before anything is sent.
+
+    The checks --force cannot skip come first, so the later errors do not
+    suggest a --force that cannot help. Returns the range a -W erases, or
+    None without erase_write.
+    """
+    if address < 0:
+        raise CmdException("Write address %d is negative." % address)
     if address % 4:
         raise CmdException("Write address 0x%08X is not 4-byte aligned."
                            % address)
+    check_guessed_flash_end(device, address, length)
+    erase_range = None
+    if erase_write:
+        # The page erase only covers flash, so the image must fit inside it
+        erase_range = erase_write_range(device, address, length)
+    _check_write_target(device, address, force, erase_write)
+    check_flash_bounds(device, address, length, "Write", force)
+    return erase_range
+
+
+def erase_write_range(device, address, length):
+    """Return the (start, length) erased by -W: every page the image touches.
+
+    Raises CmdException unless the image is non-empty and entirely inside
+    flash, or if its first page would start below flash. The end is bounded
+    by the end of flash in case the size is not a whole number of pages.
+    """
+    if address < 0:
+        raise CmdException("Erase-write address %d is negative." % address)
+    if length <= 0:
+        raise CmdException("Erase-write of %d bytes at 0x%08X: nothing to "
+                           "write." % (length, address))
+    if (address < device.flash_start_addr
+            or address + length > device.flash_end):
+        message = ("Erase-write 0x%08X-0x%08X (%d bytes) is outside "
+                   "flash (0x%08X-0x%08X)"
+                   % (address, address + length, length,
+                      device.flash_start_addr, device.flash_end))
+        if not device.size_known:
+            message += " (%s)" % guessed_size_note(device)
+        raise CmdException(message + ".")
+    start = device.page_align_down(address)
+    if start < device.flash_start_addr:
+        # A page erase would clear memory below flash
+        raise CmdException("Flash start 0x%08X is not on a %d byte page "
+                           "boundary, so 0x%08X cannot be erase-written."
+                           % (device.flash_start_addr, device.page_size,
+                              address))
+    end = min(device.page_align_up(address + length), device.flash_end)
+    return start, end - start
+
+
+def _check_write_target(device, address, force, erase_write):
+    """Reject write addresses the bootloader cannot program as flash.
+
+    Part of check_write, which also checks alignment and length.
+    """
     if not device.flash_start_addr <= address < device.flash_end:
+        # check_write refuses erase-writes outside flash before this
         message = ("Write address 0x%08X is outside flash (0x%08X-0x%08X)."
                    % (address, device.flash_start_addr, device.flash_end))
-        if erase_write:
-            raise CmdException(message + " Erase-write only works on flash.")
         if not force:
             raise CmdException(message + " Use --force to continue anyway.")
         mdebug(5, "Warning: " + message)
@@ -1287,6 +1685,14 @@ class _VersionAction(argparse.Action):
         parser.exit()
 
 
+def parse_int(value):
+    """Parse a decimal or 0x-prefixed integer for -a, -l and -b."""
+    try:
+        return parse_number(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err))
+
+
 def cli_setup():
     parser = argparse.ArgumentParser()
 
@@ -1299,19 +1705,28 @@ def cli_setup():
     parser.add_argument('-W', '--erase-write', action='store_true', help='Write after erasing the pages the image covers (avoids a mass erase). Whole pages are erased, so other data in the last page is lost. A start address that is not page aligned requires --force.')
     parser.add_argument('-v', '--verify', action='store_true', help='Verify (CRC32 check)')
     parser.add_argument('-r', '--read', action='store_true', help='Read')
-    parser.add_argument('-l', '--len', type=int, help='Length of read (default: to the end of flash)')
+    parser.add_argument('-l', '--len', type=parse_int, help='Length of read (default: to the end of flash). Decimal unless prefixed with 0x')
     parser.add_argument('-p', '--port', help='Serial port (default: first USB-like port in /dev)')
-    parser.add_argument('-b', '--baud', type=int, help=f"Baud speed (default: {DEFAULT_BAUD})")
-    parser.add_argument('-a', '--address', type=int, help='Target address')
+    parser.add_argument('-b', '--baud', type=parse_int, help=f"Baud speed (default: {DEFAULT_BAUD}). Decimal unless prefixed with 0x")
+    parser.add_argument('-a', '--address', type=parse_int, help='Target address. Decimal unless prefixed with 0x')
     parser.add_argument('-i', '--ieee-address', help='Set the secondary 64 bit IEEE address')
     parser.add_argument('--bootloader-active-high', action='store_true', help='Use active high signals to enter bootloader')
     parser.add_argument('--bootloader-invert-lines', action='store_true', help='Inverts the use of RTS and DTR to enter bootloader')
     parser.add_argument('--bootloader-sonoff-usb', action='store_true', help='Toggles RTS and DTR in the correct pattern for Sonoff USB dongle')
+    parser.add_argument('--skip-ccfg-check', action='store_true', help='Skip the CCFG, boot loader lockout and IEEE address checks and their questions (and the question for -e on a chip with a guessed flash size), but keep the other checks')
     parser.add_argument('-D', '--disable-bootloader', action='store_true', help='After finishing, disable the bootloader')
     parser.add_argument('--version', action=_VersionAction, nargs=0, help="show program's version number and exit")
     parser.add_argument('file', nargs='?', default=None, help='Firmware file to write or verify, or output file for read')
 
     args = parser.parse_args()
+    if args.address is not None and args.address < 0:
+        parser.error('the address given with -a must not be negative')
+    if args.len is not None and args.len <= 0:
+        parser.error('the length given with -l must be positive')
+    if args.baud is not None and args.baud <= 0:
+        parser.error('the baud rate given with -b must be positive')
+    if args.write and args.erase_write:
+        parser.error('-w and -W both write the image; use one of them')
     if args.port == '':
         parser.error('the serial port given with -p is empty')
     if args.file is None and (args.write or args.erase_write or args.verify
@@ -1335,7 +1750,7 @@ def main_cli():
 
     force_speed = False
 
-    if args.baud:
+    if args.baud is not None:
         force_speed = True
     else:
         args.baud = DEFAULT_BAUD
@@ -1366,10 +1781,6 @@ def main_cli():
         if (args.read and not (args.write  or args.erase_write)
             and args.verify):
             raise Exception('Verify after read not implemented.')
-
-        if args.len is not None and args.len <= 0:
-            raise Exception('Length must be positive but %d was provided'
-                            % (args.len,))
 
         # Validate the firmware before touching the device
         firmware = None
@@ -1438,6 +1849,12 @@ def main_cli():
             mdebug(10, "    Target id 0x%x, %s" % (chip_id, chip_id_str))
             device = CC2538(cmd)
 
+        size_warning = device.size_warning()
+        if size_warning:
+            # Printed even with -q: reads without -l stop at this size
+            print(size_warning + " Writes into flash past it are refused.",
+                  file=sys.stderr)
+
         # Choose a good default address unless the user specified -a
         if args.address is None:
             args.address = device.flash_start_addr
@@ -1466,45 +1883,34 @@ def main_cli():
             erase_range = parse_page_address_range(device, args.erase_page)
             check_erase_range(device, erase_range[0], erase_range[1])
             erase_ranges.append((erase_range[0], erase_range[1]))
+        write_erase = None
         if args.write or args.erase_write:
-            check_write_target(device, args.address, args.force,
-                               args.erase_write)
-            check_flash_bounds(device, args.address, len(firmware.bytes),
-                               "Write", args.force)
-        if args.erase_write:
-            # Cover every page the image touches
-            erase_start = device.page_align_down(args.address)
-            erase_end = min(device.page_align_up(args.address +
-                                                 len(firmware.bytes)),
-                            device.flash_end)
-            erase_ranges.append((erase_start, erase_end - erase_start))
-        if args.write or args.erase_write:
-            if (device.image_disables_bootloader(firmware.bytes, args.address)
-                    and not (args.force or
-                             query_yes_no("The boot loader backdoor is not "
-                                          "enabled in the firmware you are "
-                                          "about to write to the target. You "
-                                          "will NOT be able to reprogram the "
-                                          "target using this tool if you "
-                                          "continue! Do you want to continue?",
-                                          "no"))):
+            write_erase = check_write(device, args.address,
+                                      len(firmware.bytes), force=args.force,
+                                      erase_write=args.erase_write)
+        check_ccfg = not (args.force or args.skip_ccfg_check)
+        if check_ccfg and not device.ccfg_known:
+            question = guessed_ccfg_question(device, args, ieee_addr)
+            if question and not query_yes_no(question, "no", SKIP_CCFG_HINT):
                 raise Exception('Aborted by user.')
-        if args.write or args.erase_write:
-            # Warn when an erase wipes CCFG and the image only partly restores
-            # it. A plain -e -w of an app without CCFG is a common workflow
-            # and does not prompt.
-            ccfg_addr, ccfg_len = device.ccfg_range()
-            if (ranges_overlap(erase_ranges, ccfg_addr, ccfg_len)
-                    and not device.image_covers_ccfg(firmware.bytes,
-                                                     args.address)
-                    and (args.erase_write or
-                         device.image_has_ccfg(firmware.bytes, args.address))
-                    and not (args.force or
-                             query_yes_no("This erase includes the CCFG area "
-                                          "and the image does not restore it. "
-                                          "The firmware will not boot until "
-                                          "CCFG is written. Do you want to "
-                                          "continue?", "no"))):
+        if (args.write or args.erase_write) and check_ccfg \
+                and device.ccfg_known:
+            # Only asks questions, and may read the target, so skip it
+            # entirely with --force or --skip-ccfg-check
+            question = ccfg_write_question(device, firmware.bytes,
+                                           args.address, erase_ranges,
+                                           write_erase,
+                                           args.disable_bootloader)
+            if question and not query_yes_no(question, "no", SKIP_CCFG_HINT):
+                raise Exception('Aborted by user.')
+        if ieee_addr is not None and check_ccfg and device.ccfg_known:
+            all_erases = erase_ranges + ([write_erase] if write_erase else [])
+            writing = args.write or args.erase_write
+            question = ieee_write_question(
+                device, struct.pack('<Q', ieee_addr),
+                firmware.bytes if writing else None,
+                args.address, all_erases)
+            if question and not query_yes_no(question, "no", SKIP_CCFG_HINT):
                 raise Exception('Aborted by user.')
         if args.disable_bootloader:
             device.confirm_disable_bootloader(args.force)
@@ -1530,8 +1936,6 @@ def main_cli():
 
         if args.write:
             reset_on_failure = False
-            # TODO: check if boot loader back-door is open, need to read
-            #       flash size first to get address
             if cmd.writeMemory(args.address, firmware.bytes, True):
                 mdebug(5, "    Write done                                ")
             else:
@@ -1539,9 +1943,7 @@ def main_cli():
 
         if args.erase_write:
             reset_on_failure = False
-            # TODO: check if boot loader back-door is open, need to read
-            #       flash size first to get address
-            if device.eraseRange(erase_start, erase_end - erase_start):
+            if device.eraseRange(*write_erase):
                 mdebug(5, "    Erase before write done                 ")
             else:
                 raise CmdException("Erase before write failed")
