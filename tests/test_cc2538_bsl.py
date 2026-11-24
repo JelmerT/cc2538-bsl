@@ -491,19 +491,158 @@ def test_cc2538_secondary_ieee_follows_flash_size(size_code, expected):
     assert CC2538(Fake()).addr_ieee_address_secondary == expected
 
 
-def test_version_falls_back_to_this_checkout(monkeypatch):
+def _fake_checkout(monkeypatch, root, project):
+    package = root / "cc2538_bsl"
+    package.mkdir()
+    (root / ".git").mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "%s"\n' % project)
+    monkeypatch.setattr(bsl, "__file__", str(package / "cc2538_bsl.py"))
+
     import importlib.metadata
 
     def missing(name):
         raise importlib.metadata.PackageNotFoundError(name)
 
+    monkeypatch.setattr(importlib.metadata, "version", missing)
     seen = []
 
     def describe(command, **kwargs):
         seen.append(command)
         return b"2.1-5-gabc\n"
 
-    monkeypatch.setattr(importlib.metadata, "version", missing)
     monkeypatch.setattr(bsl.subprocess, "check_output", describe)
+    return seen
+
+
+def test_version_falls_back_to_this_checkout(monkeypatch, tmp_path):
+    seen = _fake_checkout(monkeypatch, tmp_path, "cc2538-bsl")
     assert bsl.version() == "2.1-5-gabc"
-    assert seen[0][:3] == ["git", "-C", REPO_ROOT]
+    assert seen[0][:3] == ["git", "-C", str(tmp_path)]
+
+
+def test_version_ignores_repo_vendoring_this_package(monkeypatch, tmp_path):
+    seen = _fake_checkout(monkeypatch, tmp_path, "host-project")
+    assert bsl.version() == bsl.__version__
+    assert seen == []
+
+
+def test_write_outside_flash_rejected_before_erase(fake_cli, monkeypatch, tmp_path):
+    class HighFlash(_FakeDevice):
+        def __init__(self, command_interface):
+            super().__init__(command_interface)
+            self.flash_start_addr = 0x00200000
+
+    monkeypatch.setattr(bsl, "CC26xx", HighFlash)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-e", "-w", "-a", "0", str(fw))
+    assert "outside flash" in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_write_outside_flash_allowed_with_force(fake_cli, tmp_path):
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    fake_cli("-f", "-w", "-a", str(0x2000), str(fw))
+    assert fake_cli.cmd.write_addr == 0x2000
+
+
+def test_erase_write_outside_flash_rejected_with_force(fake_cli, tmp_path):
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit):
+        fake_cli("-f", "-W", "-a", str(0x2000), str(fw))
+    assert "erase_range" not in fake_cli.cmd.calls
+
+
+@pytest.mark.parametrize("flag", ["-w", "-W"])
+def test_unaligned_write_address_rejected_before_erase(fake_cli, tmp_path, flag):
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-e", flag, "-a", "2", str(fw))
+    assert "aligned" in str(exc.value.code)
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+@pytest.mark.parametrize("value", [
+    "1ffffffffffffffff",
+    "-1",
+    "100:22:33:44:55:66:77:88",
+])
+def test_parse_ieee_address_out_of_range(value):
+    with pytest.raises(ValueError):
+        parse_ieee_address(value)
+
+
+def test_file_without_operation_needs_port(monkeypatch, tmp_path):
+    cmd = _FakeCmd()
+    monkeypatch.setattr(bsl, "CommandInterface", lambda: cmd)
+    monkeypatch.setattr(sys, "argv", ["cc2538-bsl", str(tmp_path / "fw.bin")])
+    with pytest.raises(SystemExit) as exc:
+        bsl.main_cli()
+    assert exc.value.code == 2
+    assert cmd.calls == []
+
+
+@pytest.mark.parametrize("erase_range", ["p,4,1", "p,1,1", "p,0,100", "a,0x2000"])
+def test_invalid_erase_range_bounds(fake_cli, erase_range):
+    with pytest.raises(SystemExit):
+        fake_cli("-e", "-E", erase_range)
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_unaligned_decimal_erase_address_is_not_read_as_hex(fake_cli):
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-E", "a,1000")
+    assert "aligned" in str(exc.value.code)
+    assert "erase_range" not in fake_cli.cmd.calls
+
+
+def test_erase_address_forms(fake_cli):
+    # Mixed 0x-prefixed hex and decimal: 0x100 up to 512 (0x200)
+    fake_cli("-E", "a,0x100,512")
+    assert fake_cli.cmd.erase_args == (0x100, 0x100)
+
+
+def test_crc_mismatch_survives_failed_reset(fake_cli, monkeypatch, tmp_path):
+    def fail(self):
+        raise bsl.CmdException("reset failed")
+    monkeypatch.setattr(_FakeCmd, "cmdReset", fail)
+    monkeypatch.setattr(_FakeDevice, "crc", lambda self, addr, size: 0, raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 16)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-v", str(fw))
+    assert "NO CRC32 match" in str(exc.value.code)
+
+
+def test_failed_read_keeps_existing_output(fake_cli, monkeypatch, tmp_path):
+    def fail(self, addr):
+        if addr >= 8:
+            raise bsl.CmdException("Read failed")
+        return bytearray(4)
+    monkeypatch.setattr(_FakeDevice, "read_memory", fail)
+    out = tmp_path / "out.bin"
+    out.write_bytes(b"keep")
+    with pytest.raises(SystemExit):
+        fake_cli("-r", "-l", "16", str(out))
+    assert out.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("cls, method", [
+    (CC2538, "cmdMemRead"),
+    (CC26xx, "cmdMemReadCC26xx"),
+])
+def test_read_memory_reports_failed_read(cls, method):
+    device = cls.__new__(cls)
+
+    class Fake:
+        pass
+
+    fake = Fake()
+    setattr(fake, method, lambda addr: None)
+    device.command_interface = fake
+    with pytest.raises(bsl.CmdException):
+        device.read_memory(0x1000)

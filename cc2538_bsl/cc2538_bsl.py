@@ -821,6 +821,8 @@ class CC2538(Chip):
         # CC2538's COMMAND_MEMORY_READ sends each 4-byte number in inverted
         # byte order compared to what's written on the device
         data = self.command_interface.cmdMemRead(addr)
+        if data is None:
+            raise CmdException("Read failed at address 0x%08X" % addr)
         return bytearray([data[x] for x in range(3, -1, -1)])
 
 
@@ -981,7 +983,10 @@ class CC26xx(Chip):
     def read_memory(self, addr):
         # CC26xx COMMAND_MEMORY_READ returns contents in the same order as
         # they are stored on the device
-        return self.command_interface.cmdMemReadCC26xx(addr)
+        data = self.command_interface.cmdMemReadCC26xx(addr)
+        if data is None:
+            raise CmdException("Read failed at address 0x%08X" % addr)
+        return data
 
 
 def query_yes_no(question, default="yes"):
@@ -1014,7 +1019,7 @@ def query_yes_no(question, default="yes"):
 # Convert the entered IEEE address into an integer
 def parse_ieee_address(inaddr):
     try:
-        return int(inaddr, 16)
+        addr = int(inaddr, 16)
     except ValueError:
         # inaddr is not a hex string, look for other formats
         if ':' in inaddr:
@@ -1029,30 +1034,43 @@ def parse_ieee_address(inaddr):
         addr = 0
         for i, b in zip(range(8), octets):
             try:
-                addr += int(b, 16) << (56-(i*8))
+                octet = int(b, 16)
             except ValueError:
                 raise ValueError("IEEE address contains invalid bytes")
-        return addr
+            if not 0 <= octet <= 0xFF:
+                raise ValueError("IEEE address contains invalid bytes")
+            addr += octet << (56-(i*8))
+    if not 0 <= addr < 2 ** 64:
+        raise ValueError("IEEE address does not fit in 64 bits")
+    return addr
+
+
+def _parse_range_number(value):
+    """Parse an int, 0x-prefixed hex, decimal, or unprefixed hex with a-f."""
+    if isinstance(value, int):
+        return value
+    text = value.strip().lower()
+    if text.startswith('0x'):
+        return int(text, 16)
+    try:
+        return int(text, 10)
+    except ValueError:
+        return int(text, 16)
 
 
 def _parse_range_values(device, values):
     if len(values) and len(values) < 3:
         page_addr_range = []
-        try:
-            for value in values:
-                try:
-                    if int(value) % int(device.page_size) != 0:
-                        raise ValueError("Supplied addresses are not page_size: "
-                                         "{} aligned".format(device.page_size))
-                    page_addr_range.append(int(value))
-                except ValueError:
-                    if int(value, 16) % int(device.page_size) != 0:
-                        raise ValueError("Supplied addresses are not page_size: "
-                                         "{} aligned".format(device.page_size))
-                    page_addr_range.append(int(value, 16))
-            return page_addr_range
-        except ValueError:
-            raise ValueError("Supplied value is not a page or an address")
+        for value in values:
+            try:
+                number = _parse_range_number(value)
+            except ValueError:
+                raise ValueError("Supplied value is not a page or an address")
+            if number % int(device.page_size) != 0:
+                raise ValueError("Supplied addresses are not page_size: "
+                                 "{} aligned".format(device.page_size))
+            page_addr_range.append(number)
+        return page_addr_range
     else:
         raise ValueError("Supplied range is neither a page or address range")
 
@@ -1075,6 +1093,30 @@ def parse_page_address_range(device, pg_range):
         return [page_addr[0], device.page_size]
     else:
         return [page_addr[0], (page_addr[1] - page_addr[0])]
+
+
+def check_erase_range(device, start, length):
+    """Reject an erase range that is empty or not entirely inside flash."""
+    if length <= 0:
+        raise ValueError("Erase range end must be after its start")
+    if start < device.flash_start_addr or start + length > device.flash_end:
+        raise ValueError("Erase range 0x%08X-0x%08X is outside flash "
+                         "(0x%08X-0x%08X)" % (start, start + length,
+                                              device.flash_start_addr,
+                                              device.flash_end))
+
+
+def check_write_target(device, address, force=False):
+    """Reject write addresses the bootloader cannot program as flash."""
+    if address % 4:
+        raise CmdException("Write address 0x%08X is not 4-byte aligned."
+                           % address)
+    if not device.flash_start_addr <= address < device.flash_end:
+        message = ("Write address 0x%08X is outside flash (0x%08X-0x%08X)."
+                   % (address, device.flash_start_addr, device.flash_end))
+        if not force:
+            raise CmdException(message + " Use --force to continue anyway.")
+        mdebug(5, "Warning: " + message)
 
 
 def check_flash_bounds(device, address, length, action, force=False):
@@ -1118,6 +1160,17 @@ def reset_target(cmd):
         mdebug(5, "Warning: could not reset target: %s" % err)
 
 
+def _is_own_checkout(root):
+    """Return True if root is this project's repo, not one vendoring it."""
+    if not os.path.exists(os.path.join(root, '.git')):
+        return False
+    try:
+        with open(os.path.join(root, 'pyproject.toml')) as f:
+            return any(line.strip() == 'name = "cc2538-bsl"' for line in f)
+    except OSError:
+        return False
+
+
 def version():
     # Use the installed package's version, set from git tags at build time.
     try:
@@ -1128,7 +1181,7 @@ def version():
 
     # Not installed: use this checkout's tags, never those of the current dir.
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if os.path.exists(os.path.join(root, '.git')):
+    if _is_own_checkout(root):
         try:
             output = subprocess.check_output(
                 ['git', '-C', root, 'describe', '--tags', '--match', '[0-9]*'],
@@ -1170,8 +1223,9 @@ def cli_setup():
         parser.error('a file is required with -w, -W, -v or -r')
     # Connecting pulses the reset lines, so never do it on an auto-selected
     # port unless an operation was requested.
-    if args.file is None and args.port is None and not (
-            args.erase or args.erase_page or args.ieee_address is not None
+    if args.port is None and not (
+            args.erase or args.erase_page or args.write or args.erase_write
+            or args.verify or args.read or args.ieee_address is not None
             or args.disable_bootloader):
         parser.error('no operation requested; use -p PORT to only identify '
                      'the target')
@@ -1304,14 +1358,13 @@ def main_cli():
         try:
             if args.erase_page:
                 erase_range = parse_page_address_range(device, args.erase_page)
+                check_erase_range(device, erase_range[0], erase_range[1])
             if args.write or args.erase_write:
+                check_write_target(device, args.address,
+                                   args.force and not args.erase_write)
                 check_flash_bounds(device, args.address, len(firmware.bytes),
                                    "Write", args.force)
             if args.erase_write:
-                if not (device.flash_start_addr <= args.address
-                        < device.flash_end):
-                    raise CmdException("Erase-write address 0x%08X is outside "
-                                       "flash." % args.address)
                 # Cover every page the image touches
                 erase_start = device.page_align_down(args.address)
                 erase_end = min(device.page_align_up(args.address +
@@ -1368,7 +1421,7 @@ def main_cli():
             if crc_local == crc_target:
                 mdebug(5, "    Verified (match: 0x%08x)" % crc_local)
             else:
-                cmd.cmdReset()
+                reset_target(cmd)
                 raise Exception("NO CRC32 match: Local = 0x%x, "
                                 "Target = 0x%x" % (crc_local, crc_target))
 
@@ -1391,14 +1444,17 @@ def main_cli():
             mdebug(5, "Reading %s bytes starting at address 0x%x"
                    % (length, args.address))
 
+            # Keep any existing output file until the whole read succeeds
+            read_data = bytearray()
+            for i in range(0, length >> 2):
+                # reading 4 bytes at a time
+                rdata = device.read_memory(args.address + (i * 4))
+                mdebug(5, " 0x%x: 0x%02x%02x%02x%02x"
+                       % (args.address + (i * 4), rdata[0], rdata[1],
+                          rdata[2], rdata[3]), '\r')
+                read_data += rdata
             with open(args.file, 'wb') as f:
-                for i in range(0, length >> 2):
-                    # reading 4 bytes at a time
-                    rdata = device.read_memory(args.address + (i * 4))
-                    mdebug(5, " 0x%x: 0x%02x%02x%02x%02x"
-                           % (args.address + (i * 4), rdata[0], rdata[1],
-                              rdata[2], rdata[3]), '\r')
-                    f.write(rdata)
+                f.write(read_data)
             mdebug(5, "    Read done                                ")
 
         if args.disable_bootloader:
