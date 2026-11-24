@@ -899,9 +899,10 @@ class CC2538(Chip):
             # the end of flash (and CCFG) is a guess
             self.ccfg_known = False
             self.size_known = False
-            mdebug(5, "Warning: unknown flash size code %d, assuming 64 KB. "
-                      "Reads, erases and range checks use this size."
-                      % ((model[3] & 0x70) >> 4))
+            # Printed even with -q: reads without -l stop at this size
+            print("Warning: unknown flash size code %d, assuming 64 KB. "
+                  "Reads, erases and range checks use this size."
+                  % ((model[3] & 0x70) >> 4), file=sys.stderr)
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -1129,9 +1130,9 @@ class CC26xx(Chip):
         return data
 
 
-SKIP_CCFG_HINT = ("Use --skip-ccfg-check to skip the CCFG, lockout and IEEE "
-                  "address questions, or --force to skip all prompts and "
-                  "some checks.")
+SKIP_CCFG_HINT = ("Use --skip-ccfg-check to skip the CCFG, lockout, IEEE "
+                  "address and guessed flash size questions, or --force to "
+                  "skip all prompts and some checks.")
 
 
 def query_yes_no(question, default="yes",
@@ -1439,15 +1440,26 @@ def ccfg_write_question(device, image, address, erase_ranges, write_erase,
             "Do you want to continue?")
 
 
-def check_erase_range(device, start, length):
-    """Reject an erase range that is empty or not entirely inside flash."""
+def check_erase_range(device, start, length, force=False):
+    """Reject an erase range that is empty or not entirely inside flash.
+
+    With a guessed flash size, --force allows a range past the guessed end.
+    """
     if length <= 0:
         raise ValueError("Erase range end must be after its start")
     if start < device.flash_start_addr or start + length > device.flash_end:
-        raise ValueError("Erase range 0x%08X-0x%08X is outside flash "
-                         "(0x%08X-0x%08X)" % (start, start + length,
-                                              device.flash_start_addr,
-                                              device.flash_end))
+        message = ("Erase range 0x%08X-0x%08X is outside flash "
+                   "(0x%08X-0x%08X)" % (start, start + length,
+                                        device.flash_start_addr,
+                                        device.flash_end))
+        if (force and not device.size_known
+                and start >= device.flash_start_addr):
+            mdebug(5, "Warning: %s, which is a guess." % message)
+            return
+        if not device.size_known and start >= device.flash_start_addr:
+            message += (". The flash size is a guess; use --force to erase "
+                        "past it")
+        raise ValueError(message)
 
 
 def check_write_target(device, address, force=False, erase_write=False):
@@ -1594,7 +1606,7 @@ def cli_setup():
     parser.add_argument('--bootloader-active-high', action='store_true', help='Use active high signals to enter bootloader')
     parser.add_argument('--bootloader-invert-lines', action='store_true', help='Inverts the use of RTS and DTR to enter bootloader')
     parser.add_argument('--bootloader-sonoff-usb', action='store_true', help='Toggles RTS and DTR in the correct pattern for Sonoff USB dongle')
-    parser.add_argument('--skip-ccfg-check', action='store_true', help='Skip the CCFG, boot loader lockout and IEEE address checks and their questions, but keep the other checks')
+    parser.add_argument('--skip-ccfg-check', action='store_true', help='Skip the CCFG, boot loader lockout and IEEE address checks and their questions (and the question for -e on a chip with a guessed flash size), but keep the other checks')
     parser.add_argument('-D', '--disable-bootloader', action='store_true', help='After finishing, disable the bootloader')
     parser.add_argument('--version', action=_VersionAction, nargs=0, help="show program's version number and exit")
     parser.add_argument('file', nargs='?', default=None, help='Firmware file to write or verify, or output file for read')
@@ -1752,7 +1764,8 @@ def main_cli():
             erase_ranges.append((device.flash_start_addr, device.size))
         if args.erase_page is not None:
             erase_range = parse_page_address_range(device, args.erase_page)
-            check_erase_range(device, erase_range[0], erase_range[1])
+            check_erase_range(device, erase_range[0], erase_range[1],
+                              args.force)
             erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
             check_write_target(device, args.address, args.force,
