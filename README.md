@@ -85,6 +85,17 @@ To write firmware, the target flash has to be erased first, so pass `-e` togethe
 * Write a raw binary firmware: `cc2538-bsl -e -w -v example/main.bin`
 * Write firmware to a Sonoff Zigbee 3.0 USB Dongle Plus: `cc2538-bsl --bootloader-sonoff-usb -e -w -v CC1352P2_CC2652P_launchpad_coordinator.hex`
 
+Before erasing, the script checks what the write will leave in CCFG and asks for confirmation when:
+
+* the boot loader would be closed after the write. The script works this out from the image's boot loader configuration together with what the erase clears, or, without an erase, the value read from the target;
+* a write without erase cannot set CCFG bits the image asks for, such as the backdoor pin or level, because the target has those bits cleared;
+* an erase clears CCFG and the image restores only part of it;
+* the page erase done by `-W` clears CCFG and the image does not restore it.
+
+An image without CCFG does not ask when an explicit `-e`, or an `-E` that covers the CCFG page, clears CCFG, because that erase was requested. The boot loader check looks only at the boot loader configuration, so it can also ask when the rest of CCFG leaves the image invalid and the ROM boot loader would still run. A write without erase whose image reaches CCFG stops with an error if CCFG cannot be read from the target. On a chip the script does not recognise, the location of CCFG is a guess, so it asks once instead of running these checks. With `-D`, the lockout question is left to the `-D` confirmation. Pass `-f` to skip these questions, for example in scripts without a terminal. `-f` also skips the other confirmation questions and the checks that stop `-w` from writing outside flash and `-w` and `-r` from going past the end of flash, and the page alignment check for `-W`.
+
+When `-i` sets an IEEE address without erasing its flash page, the script reads the address area first and asks if the new address cannot be written over the old one.
+
 ### Remarks
 
 * Programming multiple SoCs at the same time is not yet supported.

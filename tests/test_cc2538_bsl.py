@@ -801,20 +801,20 @@ def test_image_disables_bootloader(cls, word, disabled):
     device = cls.__new__(cls)
     device.bootloader_address = 0x100
     image = bytearray(0x100) + bytearray(word.to_bytes(4, "little"))
-    assert device.image_disables_bootloader(image, 0) is disabled
+    assert device.image_disables_bootloader(image, 0, bsl.Chip.BLANK_WORD) is disabled
 
 
 def test_erased_cc26xx_ccfg_does_not_warn():
     device = CC26xx.__new__(CC26xx)
     device.bootloader_address = 0x130
     assert device.image_disables_bootloader(
-        bytearray(0x100) + bytearray(b"\xFF" * 88), 0) is False
+        bytearray(0x100) + bytearray(b"\xFF" * 88), 0, bsl.Chip.BLANK_WORD) is False
 
 
 def test_image_without_ccfg_does_not_warn():
     device = CC26xx.__new__(CC26xx)
     device.bootloader_address = 0x100
-    assert device.image_disables_bootloader(bytearray(0x80), 0) is False
+    assert device.image_disables_bootloader(bytearray(0x80), 0, bsl.Chip.BLANK_WORD) is False
 
 
 def test_empty_erase_range_rejected(fake_cli, tmp_path):
@@ -975,7 +975,7 @@ def test_partial_blank_ccfg_does_not_warn():
     device = CC26xx.__new__(CC26xx)
     device.bootloader_address = 0x130
     image = bytearray(0x100) + bytearray(b"\xFF" * 0x40)
-    assert device.image_disables_bootloader(image, 0) is False
+    assert device.image_disables_bootloader(image, 0, bsl.Chip.BLANK_WORD) is False
 
 
 def test_zero_length_read_keeps_output(fake_cli, tmp_path):
@@ -1009,21 +1009,33 @@ def test_read_to_pipe(fake_cli):
         os.close(write_fd)
 
 
-def _ccfg_tail_device():
+_BL_ENABLED = 0xC5FE0AC5
+
+
+def _ccfg_tail_device(chip_word=_BL_ENABLED, ccfg_fill=0xFF):
     device = CC26xx.__new__(CC26xx)
     device.bootloader_address = 0x130  # CCFG at 0x100-0x158
+    device.reads = []
+
+    def read_memory(addr):
+        device.reads.append(addr)
+        if addr == 0x130:
+            return bytearray(chip_word.to_bytes(4, "little"))
+        return bytearray([ccfg_fill] * 4)
+
+    device.read_memory = read_memory
     return device
 
 
 def test_blank_ccfg_tail_does_not_warn():
     image = bytearray(b"\xFF" * 0x10)
     assert _ccfg_tail_device().image_disables_bootloader(
-        image, 0x134) is False
+        image, 0x134, bsl.Chip.BLANK_WORD) is False
 
 
 def test_app_image_before_ccfg_does_not_warn_on_mass_erase():
     assert _ccfg_tail_device().image_disables_bootloader(
-        bytearray(0x80), 0) is False
+        bytearray(0x80), 0, bsl.Chip.BLANK_WORD) is False
 
 
 def test_unaligned_erase_write_rejected_before_erase(fake_cli, tmp_path):
@@ -1041,16 +1053,6 @@ def test_forced_erase_write_outside_flash_has_no_force_hint(fake_cli, tmp_path):
     with pytest.raises(SystemExit) as exc:
         fake_cli("-f", "-W", "-a", str(0x2000), str(fw))
     assert "--force" not in str(exc.value.code)
-
-
-def test_erase_write_wiping_ccfg_prompts(fake_cli, monkeypatch, tmp_path):
-    monkeypatch.setattr(bsl, "query_yes_no", lambda question, default: False)
-    fw = tmp_path / "fw.bin"
-    fw.write_bytes(b"\x01" * 16)
-    with pytest.raises(SystemExit) as exc:
-        fake_cli("-W", "-a", str(0xF00), str(fw))
-    assert "Aborted" in str(exc.value.code)
-    assert fake_cli.cmd.calls == ["open", "reset"]
 
 
 def test_erase_write_restoring_ccfg_does_not_prompt(fake_cli, monkeypatch, tmp_path):
@@ -1078,15 +1080,158 @@ def test_interrupt_during_reset_is_contained():
     bsl.reset_target(Cmd())
 
 
-def test_ccfg_tail_without_bl_config_warns():
-    assert _ccfg_tail_device().image_disables_bootloader(
-        bytearray(0x10), 0x134) is True
+# Without an erase the word on the chip is kept, so it decides the result
+@pytest.mark.parametrize("erased, chip_word, disabled", [
+    (True, _BL_ENABLED, True),
+    (False, _BL_ENABLED, False),
+    (False, 0xFFFFFFFF, True),
+], ids=["erased", "chip-enabled", "chip-blank"])
+def test_ccfg_tail_without_bl_config(erased, chip_word, disabled):
+    device = _ccfg_tail_device(chip_word)
+    start = bsl.Chip.BLANK_WORD if erased else bytes(device.read_memory(device.bootloader_address))
+    assert device.image_disables_bootloader(
+        bytearray(0x10), 0x134, start) is disabled
 
 
-def test_blank_bl_config_in_ccfg_warns():
+@pytest.mark.parametrize("erased, chip_word, disabled", [
+    (True, _BL_ENABLED, True),
+    (False, _BL_ENABLED, False),
+    (False, 0xFFFFFFFF, True),
+], ids=["erased", "chip-enabled", "chip-blank"])
+def test_blank_bl_config_in_ccfg(erased, chip_word, disabled):
     image = bytearray(0x100) + bytearray(88)
     image[0x130:0x134] = b"\xFF" * 4
-    assert _ccfg_tail_device().image_disables_bootloader(image, 0) is True
+    device = _ccfg_tail_device(chip_word)
+    start = bsl.Chip.BLANK_WORD if erased else bytes(device.read_memory(device.bootloader_address))
+    assert device.image_disables_bootloader(image, 0, start) is disabled
+
+
+@pytest.mark.parametrize("end, disabled", [
+    (0x131, True),   # writes BL_ENABLE = 0x00
+    (0x130, False),  # stops before the word
+])
+def test_partial_bl_config_bytes_count(end, disabled):
+    image = bytearray(end - 0x100)
+    device = _ccfg_tail_device()
+    assert device.image_disables_bootloader(
+        image, 0x100, bytes(device.read_memory(device.bootloader_address))) is disabled
+
+
+@pytest.mark.parametrize("erase_ranges, reads", [
+    ([], list(range(0x100, 0x158, 4))),  # no erase: chip CCFG decides
+    ([(0, 0x200)], []),                  # erase: CCFG starts blank
+], ids=["no-erase", "erase"])
+def test_question_reads_chip_only_without_erase(erase_ranges, reads):
+    device = _ccfg_tail_device()
+    bsl.ccfg_write_question(device, bytearray(0x10), 0x134, erase_ranges, None)
+    assert device.reads == reads
+
+
+def test_app_image_does_not_read_chip():
+    device = _ccfg_tail_device()
+    assert bsl.ccfg_write_question(device, bytearray(0x80), 0, [], None) is None
+    assert device.reads == []
+
+
+def test_changed_backdoor_pin_without_erase_asks():
+    device = _ccfg_tail_device(0xC5FE0DC5)  # pin 13 on the chip
+    image = bytearray(0x100) + bytearray(b"\xFF" * 88)
+    image[0x130:0x134] = (0xC5FE0FC5).to_bytes(4, "little")  # pin 15
+    question = bsl.ccfg_write_question(device, image, 0, [], None)
+    assert "backdoor pin or level will differ" in question
+    assert "-E range" in question
+
+
+def test_same_backdoor_pin_without_erase_does_not_ask():
+    device = _ccfg_tail_device(0xC5FE0FC5)
+    image = bytearray(0x100) + bytearray(b"\xFF" * 88)
+    image[0x130:0x134] = (0xC5FE0FC5).to_bytes(4, "little")
+    assert bsl.ccfg_write_question(device, image, 0, [], None) is None
+
+
+@pytest.mark.parametrize("result", [
+    bsl.CmdException("Read failed at address 0x100"),
+    bytearray(2),  # short packet
+], ids=["error", "short"])
+def test_failed_chip_read_stops(result):
+    device = _ccfg_tail_device()
+
+    def read_memory(addr):
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    device.read_memory = read_memory
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.ccfg_write_question(device, bytearray(0x10), 0x134, [], None)
+    assert "Could not read CCFG" in str(exc.value)
+    assert "past the end of flash" in str(exc.value)
+
+
+def test_coding_error_in_chip_read_is_not_hidden():
+    device = _ccfg_tail_device()
+
+    def read_memory(addr):
+        raise AttributeError("bug")
+
+    device.read_memory = read_memory
+    with pytest.raises(AttributeError):
+        bsl.ccfg_write_question(device, bytearray(0x10), 0x134, [], None)
+
+
+def test_cc2538_short_read_raises_cmd_exception():
+    device = CC2538.__new__(CC2538)
+    device.command_interface = type("Ci", (), {
+        "cmdMemRead": staticmethod(lambda addr: bytearray(2))})()
+    with pytest.raises(bsl.CmdException):
+        device.read_memory(0x100)
+
+
+def test_blank_image_bytes_over_programmed_ccfg_do_not_ask():
+    # e.g. an IEEE address set with -i, and firmware leaving that field blank
+    device = _ccfg_tail_device(ccfg_fill=0x00)
+    image = bytearray(b"\xFF" * 16)  # CCFG.IEEE_MAC and IEEE_BLE unset
+    assert bsl.ccfg_write_question(device, image, 0x120, [], None) is None
+
+
+def test_blank_image_bytes_over_cleared_protection_bits_ask():
+    # e.g. CCFG_PROT or ERASE_CONF bits the firmware wants set
+    device = _ccfg_tail_device(ccfg_fill=0x00)
+    image = bytearray(b"\xFF" * 4)
+    question = bsl.ccfg_write_question(device, image, 0x154, [], None)
+    assert "0x00000154" in question
+
+
+def test_disable_bootloader_ignores_lost_bootloader_bits():
+    device = _ccfg_tail_device(0xC5FE0DC5)
+    image = bytearray(0x100) + bytearray(b"\xFF" * 88)
+    image[0x130:0x134] = (0xC5FE0FC5).to_bytes(4, "little")
+    assert bsl.ccfg_write_question(
+        device, image, 0, [], None, disabling=True) is None
+
+
+def test_other_ccfg_bits_lost_without_erase_asks():
+    device = _ccfg_tail_device(ccfg_fill=0x00)  # chip CCFG programmed
+    image = bytearray(b"\x01" * 4)               # CCFG word at 0x100
+    question = bsl.ccfg_write_question(device, image, 0x100, [], None)
+    assert "0x00000100" in question
+    assert "will not match the firmware" in question
+
+
+def test_disable_bootloader_skips_lockout_question():
+    device = _ccfg_tail_device()
+    image = bytearray(0x100) + bytearray(88)  # BL_CONFIG = 0
+    assert bsl.ccfg_write_question(
+        device, image, 0, [(0, 0x200)], None, disabling=True) is None
+    assert "backdoor is not enabled" in bsl.ccfg_write_question(
+        device, image, 0, [(0, 0x200)], None)
+
+
+def test_partial_word_on_blank_chip_does_not_blame_firmware():
+    device = _ccfg_tail_device(0xFFFFFFFF)
+    image = bytearray(0x100) + bytearray(0x30) + bytearray(b"\xC5")
+    question = bsl.ccfg_write_question(device, image, 0, [], None)
+    assert "not enabled on the target" in question
 
 
 def _declining_prompt(monkeypatch):
@@ -1103,32 +1248,120 @@ def _declining_prompt(monkeypatch):
 @pytest.mark.parametrize("options", [
     ["-e", "-w"],
     ["-E", "a,0xF00,0x1000", "-w"],
-    ["-f", "-W"],
+    ["-W"],
+    ["-e", "-W"],
 ])
 def test_partial_ccfg_restore_after_erase_prompts(fake_cli, monkeypatch, tmp_path, options):
     questions = _declining_prompt(monkeypatch)
     fw = tmp_path / "fw.bin"
     fw.write_bytes(b"\x01" * 0xE0)  # 0xF00-0xFE0 covers only part of CCFG
-    if "-f" in options:
-        # --force skips prompts, so only check the condition is reached
-        fake_cli(*options, "-a", str(0xF00), str(fw))
-        assert "write" in fake_cli.cmd.calls
-        return
     with pytest.raises(SystemExit) as exc:
         fake_cli(*options, "-a", str(0xF00), str(fw))
     assert "Aborted" in str(exc.value.code)
-    assert "CCFG" in questions[0]
+    assert len(questions) == 1
+    assert "only restores part" in questions[0]
     assert fake_cli.cmd.calls == ["open", "reset"]
 
 
-def test_mass_erase_with_app_only_image_does_not_prompt(fake_cli, monkeypatch, tmp_path):
+@pytest.mark.parametrize("image", [
+    b"\x01" * 0x10,                 # ends before CCFG in the CCFG page
+    b"\x01" * 0xD4 + b"\xFF" * 44,  # fills CCFG with 0xFF
+], ids=["before-ccfg", "blank-ccfg"])
+def test_erase_write_without_ccfg_prompts(fake_cli, monkeypatch, tmp_path, image):
+    questions = _declining_prompt(monkeypatch)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(image)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-W", "-a", str(0xF00), str(fw))
+    assert "Aborted" in str(exc.value.code)
+    assert len(questions) == 1
+    assert "-W erase includes the CCFG area" in questions[0]
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+@pytest.mark.parametrize("options", [["-e", "-w"], ["-e", "-W"]])
+@pytest.mark.parametrize("address, image", [
+    (0, b"\x01" * 0x100),
+    (0xF00, b"\x01" * 0x10),
+    (0xF00, b"\x01" * 0xD4 + b"\xFF" * 44),
+], ids=["first-page", "before-ccfg", "blank-ccfg"])
+def test_mass_erase_and_write_without_ccfg_agree(fake_cli, monkeypatch, tmp_path, options, address, image):
     def fail(question, default):
         raise AssertionError("must not prompt")
     monkeypatch.setattr(bsl, "query_yes_no", fail)
     fw = tmp_path / "fw.bin"
-    fw.write_bytes(b"\x01" * 0x100)
-    fake_cli("-e", "-w", str(fw))
+    fw.write_bytes(image)
+    fake_cli(*options, "-a", str(address), str(fw))
     assert "write" in fake_cli.cmd.calls
+
+
+def test_plain_write_of_ccfg_tail_without_bl_config_does_not_prompt():
+    device = _ccfg_tail_device()
+    assert bsl.ccfg_write_question(
+        device, bytearray(0x10), 0x134, [], None) is None
+
+
+def test_plain_write_to_blank_chip_without_bl_config_asks():
+    device = _ccfg_tail_device(0xFFFFFFFF)
+    question = bsl.ccfg_write_question(
+        device, bytearray(0x10), 0x134, [], None)
+    assert "not enabled on the target" in question
+
+
+def test_erase_then_ccfg_tail_without_bl_config_asks_once():
+    device = _ccfg_tail_device()
+    question = bsl.ccfg_write_question(
+        device, bytearray(0x10), 0x134, [(0, 0x200)], None)
+    assert "does not fully restore it" in question
+    assert "NOT be able to reprogram" in question
+
+
+@pytest.mark.parametrize("chip_bytes, image_word, disabled", [
+    (b"\xFF\xFF\xFF\xFF", 0xFFFFFFFF, False),  # blank chip, blank image
+    (b"\xEF\xFF\xFF\xFF", 0xFFFFFFFF, True),   # chip backdoor already off
+    (b"\xFF\xFF\xFF\xFF", 0xEFFFFFFF, True),   # image turns it off
+], ids=["blank", "chip-off", "image-off"])
+def test_cc2538_write_without_erase_uses_chip_word(chip_bytes, image_word, disabled):
+    # CC2538 COMMAND_MEMORY_READ returns each word byte reversed
+    device = CC2538.__new__(CC2538)
+    device.bootloader_address = 0x100
+    device.command_interface = type("Ci", (), {
+        "cmdMemRead": staticmethod(lambda addr: bytearray(chip_bytes))})()
+    image = bytearray(0x100) + bytearray(image_word.to_bytes(4, "little"))
+    image += bytearray(40)  # rest of CCFG, so the image programs CCFG
+    assert device.image_disables_bootloader(
+        image, 0, bytes(device.read_memory(device.bootloader_address))) is disabled
+
+
+def test_plain_write_with_ccfg_reads_chip_and_asks(fake_cli, monkeypatch, tmp_path):
+    questions = _declining_prompt(monkeypatch)
+    monkeypatch.setattr(_FakeDevice, "read_memory",
+                        lambda self, addr: (self.command_interface.calls.append("read")
+                                            or bytearray(4)))
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)  # last page, BL word 0x01010101
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-w", "-a", str(0xF00), str(fw))
+    assert "Aborted" in str(exc.value.code)
+    assert "cannot set" in questions[0]
+    assert fake_cli.cmd.calls == ["open"] + ["read"] * 11 + ["reset"]
+
+
+def test_forced_plain_write_does_not_read_chip(fake_cli, monkeypatch, tmp_path):
+    def fail(self, addr):
+        raise AssertionError("must not read")
+    monkeypatch.setattr(_FakeDevice, "read_memory", fail)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)
+    fake_cli("-f", "-w", "-a", str(0xF00), str(fw))
+    assert "write" in fake_cli.cmd.calls
+
+
+def test_locked_image_question_names_backdoor():
+    device = _ccfg_tail_device()
+    image = bytearray(0x100) + bytearray(88)  # BL_CONFIG = 0
+    question = bsl.ccfg_write_question(device, image, 0, [], None)
+    assert "backdoor is not enabled" in question
 
 
 def test_closed_input_at_prompt_mentions_force(monkeypatch):
@@ -1147,3 +1380,153 @@ def test_interrupted_reset_warning_has_reason(capsys):
 
     bsl.reset_target(Cmd())
     assert "could not reset target: interrupted" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("reads", [[b""], [b"\x06\x00", b"\x00"]],
+                         ids=["no-reply", "short-data"])
+def test_receive_packet_timeout_raises_cmd_exception(monkeypatch, reads):
+    ci = CommandInterface()
+    replies = list(reads)
+    monkeypatch.setattr(ci, "_read", lambda n: replies.pop(0))
+    with pytest.raises(bsl.CmdException):
+        ci.receivePacket()
+
+
+def test_cc26xx_short_read_raises_cmd_exception():
+    device = CC26xx.__new__(CC26xx)
+    device.command_interface = type("Ci", (), {
+        "cmdMemReadCC26xx": staticmethod(lambda addr: bytearray(2))})()
+    with pytest.raises(bsl.CmdException):
+        device.read_memory(0x100)
+
+
+def test_blank_bl_config_over_enabled_chip_does_not_ask():
+    device = _ccfg_tail_device(0xC5FE0FC5)
+    image = bytearray(0x100) + bytearray(b"\xFF" * 88)
+    image[0x100:0x104] = b"\x00" * 4  # some other CCFG setting
+    assert bsl.ccfg_write_question(device, image, 0, [], None) is None
+
+
+def _ieee_device(chip_bytes):
+    device = _ccfg_tail_device()
+    device.addr_ieee_address_secondary = 0x120
+    device.page_size = 0x100
+
+    def read_memory(addr):
+        device.reads.append(addr)
+        return bytearray(chip_bytes[addr - 0x120:addr - 0x120 + 4])
+
+    device.read_memory = read_memory
+    return device
+
+
+NEW_IEEE = (0x00124B0000000002).to_bytes(8, "little")
+
+
+@pytest.mark.parametrize("chip, asks", [
+    (b"\xFF" * 8, False),                                # blank
+    ((0x00124B0000000001).to_bytes(8, "little"), True),  # other address
+    (NEW_IEEE, False),                                   # same address
+], ids=["blank", "other", "same"])
+def test_ieee_write_checks_chip(chip, asks):
+    device = _ieee_device(chip)
+    question = bsl.ieee_write_question(device, NEW_IEEE, None, 0, [])
+    assert (question is not None) is asks
+    assert device.reads == [0x120, 0x124]
+
+
+def test_ieee_write_after_erase_does_not_read():
+    device = _ieee_device(b"\x00" * 8)
+    assert bsl.ieee_write_question(
+        device, NEW_IEEE, None, 0, [(0, 0x200)]) is None
+    assert device.reads == []
+
+
+def test_ieee_write_over_image_bytes_asks():
+    device = _ieee_device(b"\xFF" * 8)
+    image = bytearray(b"\xFF" * 0x120) + bytearray(8)  # image zeroes the field
+    assert bsl.ieee_write_question(device, NEW_IEEE, image, 0, []) is not None
+
+
+def test_cli_ieee_over_other_address_asks(fake_cli, monkeypatch):
+    questions = _declining_prompt(monkeypatch)
+    monkeypatch.setattr(_FakeDevice, "addr_ieee_address_secondary",
+                        0x1000 - 44 - 8, raising=False)
+    with pytest.raises(SystemExit) as exc:
+        fake_cli("-i", "00:12:4b:00:00:00:00:02")
+    assert "Aborted" in str(exc.value.code)
+    assert "IEEE address area" in questions[0]
+    assert fake_cli.cmd.calls == ["open", "read", "read", "reset"]
+
+
+def test_partial_image_word_disabling_enabled_target_blames_firmware():
+    device = _ccfg_tail_device(0xC5FE0FC5)
+    image = bytearray(0x31)  # ends at BL_CONFIG+1 with BL_ENABLE = 0x00
+    question = bsl.ccfg_write_question(device, image, 0x100, [], None)
+    assert "in the firmware you are about to write disables" in question
+    assert "NOT be able to reprogram the target" in question
+
+
+@pytest.mark.parametrize("image, mentions_e, mentions_w", [
+    (None, False, False),
+    (bytearray(b"\xFF" * 4), True, False),      # app before the IEEE page
+    (bytearray(b"\xFF" * 0x104), True, True),   # reaches the IEEE page
+], ids=["ieee-only", "write-elsewhere", "write-reaching-page"])
+def test_ieee_hint_matches_run(image, mentions_e, mentions_w):
+    device = _ieee_device((0x00124B0000000001).to_bytes(8, "little"))
+    question = bsl.ieee_write_question(device, NEW_IEEE, image, 0, [])
+    assert "-E range" in question
+    assert ("-e" in question) is mentions_e
+    assert ("-W" in question) is mentions_w
+
+
+@pytest.mark.parametrize("size", [0, 1])
+def test_receive_packet_rejects_tiny_size(monkeypatch, size):
+    ci = CommandInterface()
+    replies = [bytes([size, 0])]
+    monkeypatch.setattr(ci, "_read", lambda n: replies.pop(0))
+    with pytest.raises(bsl.CmdException):
+        ci.receivePacket()
+
+
+@pytest.mark.parametrize("name", ["cmdCRC32", "cmdCRC32CC26xx"])
+def test_short_crc_reply_raises_cmd_exception(monkeypatch, name):
+    ci = CommandInterface()
+    monkeypatch.setattr(ci, "_write", lambda *a: None)
+    monkeypatch.setattr(ci, "_wait_for_ack", lambda *a: 1)
+    monkeypatch.setattr(ci, "receivePacket", lambda: bytearray(2))
+    monkeypatch.setattr(ci, "checkLastCmd", lambda: 1)
+    with pytest.raises(bsl.CmdException):
+        getattr(ci, name)(0, 4)
+
+
+def test_forced_erase_write_skips_ccfg_checks(fake_cli, monkeypatch, tmp_path):
+    def fail(*args):
+        raise AssertionError("must not prompt or read")
+    monkeypatch.setattr(bsl, "query_yes_no", fail)
+    monkeypatch.setattr(_FakeDevice, "read_memory", fail)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0xE0)  # partial CCFG restore
+    fake_cli("-f", "-W", "-a", str(0xF00), str(fw))
+    assert "erase_range" in fake_cli.cmd.calls
+    assert "write" in fake_cli.cmd.calls
+
+
+@pytest.mark.parametrize("options", [["-w"], ["-i", "00:12:4b:00:00:00:00:02"]])
+def test_unknown_ccfg_location_asks_once(fake_cli, monkeypatch, tmp_path, options):
+    questions = _declining_prompt(monkeypatch)
+    monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)
+    args = options + ([str(fw)] if options == ["-w"] else [])
+    with pytest.raises(SystemExit) as exc:
+        fake_cli(*args)
+    assert "Aborted" in str(exc.value.code)
+    assert len(questions) == 1
+    assert "not recognised" in questions[0]
+    assert fake_cli.cmd.calls == ["open", "reset"]
+
+
+def test_unknown_wafer_marks_ccfg_unknown():
+    fake = _FakeCommandInterface([0x00, 0x00, 0x00, 0x00])
+    assert CC26xx(fake).ccfg_known is False
