@@ -1813,3 +1813,16 @@ def test_cli_alignment_reported_before_guessed_end(fake_cli, monkeypatch,
     with pytest.raises(SystemExit) as exc:
         fake_cli("-e", "-w", "-a", str(0x1F02), str(fw))
     assert "not 4-byte aligned" in str(exc.value.code)
+
+
+def test_flash_bounds_refuses_forced_write_past_guessed_end():
+    device = CC2538.__new__(CC2538)
+    device.flash_start_addr = 0x00200000
+    device.size = 0x10000
+    device.size_known = False
+    device.size_code = 0
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.check_flash_bounds(device, 0x0020F000, 0x2000, "Write", True)
+    assert "which is a guess" in str(exc.value)
+    # Reads past a guessed end only warn under force
+    bsl.check_flash_bounds(device, 0x0020F000, 0x2000, "Read", True)

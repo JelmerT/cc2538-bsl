@@ -1503,7 +1503,7 @@ def check_write_alignment(address):
 
 def check_write_target(device, address, force=False, erase_write=False):
     """Reject write addresses the bootloader cannot program as flash."""
-    check_write_alignment(address)
+    check_write_alignment(address)  # also for callers outside main_cli
     if not device.flash_start_addr <= address < device.flash_end:
         message = ("Write address 0x%08X is outside flash (0x%08X-0x%08X)."
                    % (address, device.flash_start_addr, device.flash_end))
@@ -1524,8 +1524,11 @@ def check_write_target(device, address, force=False, erase_write=False):
 def check_flash_bounds(device, address, length, action, force=False):
     """Reject an operation that starts in flash and runs past its end.
 
-    Addresses outside flash (e.g. RAM) are left to the bootloader.
+    Addresses outside flash (e.g. RAM) are left to the bootloader. Writes
+    past a guessed end of flash are refused even with force.
     """
+    if action == "Write":
+        check_guessed_flash_end(device, address, length)
     if (device.flash_start_addr <= address < device.flash_end
             and address + length > device.flash_end):
         message = ("%s of %d bytes at 0x%08X runs past the end of flash "
@@ -1778,7 +1781,7 @@ def main_cli():
         size_warning = device.size_warning()
         if size_warning:
             # Printed even with -q: reads without -l stop at this size
-            print(size_warning + " Writes cannot go past it.",
+            print(size_warning + " Writes into flash cannot go past it.",
                   file=sys.stderr)
 
         # Choose a good default address unless the user specified -a
@@ -1810,7 +1813,9 @@ def main_cli():
             check_erase_range(device, erase_range[0], erase_range[1])
             erase_ranges.append((erase_range[0], erase_range[1]))
         if args.write or args.erase_write:
-            # Before the checks that suggest a --force that cannot help
+            # Alignment and the guessed end first, so the errors below do
+            # not suggest a --force that cannot help. check_write_target
+            # repeats the alignment check for callers outside main_cli.
             check_write_alignment(args.address)
             check_guessed_flash_end(device, args.address,
                                     len(firmware.bytes))
