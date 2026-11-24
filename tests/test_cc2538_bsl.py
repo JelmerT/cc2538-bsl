@@ -1925,7 +1925,22 @@ def test_erase_write_range_refuses(address, length, message, start):
     assert message in str(exc.value)
 
 
-def test_erase_write_range_bounded_by_unaligned_flash_start():
+def test_erase_write_range_refuses_unaligned_flash_start():
     device = _FakeDevice(_FakeCmd())
     device.flash_start_addr = 0x80
-    assert bsl.erase_write_range(device, 0x80, 0x10) == (0x80, 0x80)
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.erase_write_range(device, 0x80, 0x10)
+    assert "not on a 256 byte page boundary" in str(exc.value)
+
+
+def test_erase_write_range_messages_name_address_and_guess():
+    device = _FakeDevice(_FakeCmd())
+    device.size_known = False
+    device.size_code = 6
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.erase_write_range(device, 0xF00, 0x200)
+    assert "0x00000F00-0x00001100" in str(exc.value)
+    assert "unknown flash size code 6" in str(exc.value)
+    with pytest.raises(bsl.CmdException) as exc:
+        bsl.erase_write_range(device, 0x2000, 0)
+    assert "at 0x00002000" in str(exc.value)

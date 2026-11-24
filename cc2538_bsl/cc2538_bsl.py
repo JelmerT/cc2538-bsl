@@ -1519,19 +1519,28 @@ def erase_write_range(device, address, length):
     """Return the (start, length) erased by -W: every page the image touches.
 
     Raises CmdException unless the image is non-empty and entirely inside
-    flash. The page-rounded range is bounded by the flash start and end, in
-    case either is not on a page boundary.
+    flash, or if its first page would start below flash. The end is bounded
+    by the end of flash in case the size is not a whole number of pages.
     """
     if length <= 0:
-        raise CmdException("Erase-write of %d bytes: nothing to write."
-                           % length)
+        raise CmdException("Erase-write of %d bytes at 0x%08X: nothing to "
+                           "write." % (length, address))
     if (address < device.flash_start_addr
             or address + length > device.flash_end):
-        raise CmdException("Erase-write of %d bytes does not fit inside "
-                           "flash (0x%08X-0x%08X)."
-                           % (length, device.flash_start_addr,
-                              device.flash_end))
-    start = max(device.page_align_down(address), device.flash_start_addr)
+        message = ("Erase-write 0x%08X-0x%08X (%d bytes) does not fit "
+                   "inside flash (0x%08X-0x%08X)"
+                   % (address, address + length, length,
+                      device.flash_start_addr, device.flash_end))
+        if not device.size_known:
+            message += " (%s)" % guessed_size_note(device)
+        raise CmdException(message + ".")
+    start = device.page_align_down(address)
+    if start < device.flash_start_addr:
+        # A page erase would clear memory below flash
+        raise CmdException("Flash start 0x%08X is not on a %d byte page "
+                           "boundary, so 0x%08X cannot be erase-written."
+                           % (device.flash_start_addr, device.page_size,
+                              address))
     end = min(device.page_align_up(address + length), device.flash_end)
     return start, end - start
 
