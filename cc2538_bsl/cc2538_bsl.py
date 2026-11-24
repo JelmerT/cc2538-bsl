@@ -759,6 +759,7 @@ class Chip:
         return addresses
 
     ccfg_known = True  # False when the CCFG address is only a guess
+    size_known = True  # False when the flash size is only a guess
 
     def ccfg_range(self):
         """Return the (address, length) of the CCFG area."""
@@ -897,6 +898,7 @@ class CC2538(Chip):
             # Code 0 and the reserved codes 5-7 are not documented sizes, so
             # the end of flash (and CCFG) is a guess
             self.ccfg_known = False
+            self.size_known = False
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
                                             ccfg_len - 8)
@@ -1237,10 +1239,33 @@ def ranges_overlap(ranges, start, length):
                for r_start, r_length in ranges)
 
 
-FORCE_NOTE = ("--force also skips the other confirmation questions, the "
-              "checks that stop -w from writing outside flash and -w and -r "
-              "from going past the end of flash, and the page alignment "
-              "check for -W.")
+def guessed_ccfg_question(device, args, ieee_addr):
+    """Return the question for a chip whose CCFG location is a guess, or
+    None when the run neither writes nor mass erases."""
+    if device.size_known:
+        reason = "This chip was not recognised"
+    else:
+        reason = "The flash size this chip reports is not documented"
+    parts = []
+    if args.write or args.erase_write:
+        parts.append("the write may reach CCFG, and the boot loader "
+                     "lockout check cannot run")
+    if ieee_addr is not None:
+        parts.append("-i writes the IEEE address at the guessed address "
+                     "0x%08X, which may hold application code"
+                     % device.addr_ieee_address_secondary)
+    if args.disable_bootloader:
+        parts.append("-D writes the boot loader word at the guessed "
+                     "address 0x%08X, which may hold application code"
+                     % device.bootloader_address)
+    if args.erase and not device.size_known:
+        parts.append("-e erases only the guessed %d KB of flash"
+                     % (device.size >> 10))
+    if not parts:
+        return None
+    return ("%s, so the location of its CCFG (%d KB of flash) is a guess: "
+            "%s. Pass --skip-ccfg-check to skip this question. Do you want "
+            "to continue?" % (reason, device.size >> 10, "; ".join(parts)))
 
 
 def ieee_write_question(device, ieee_bytes, image, address, erase_ranges):
@@ -1273,8 +1298,8 @@ def ieee_write_question(device, ieee_bytes, image, address, erase_ranges):
         except (CmdException, serial.SerialException) as err:
             raise CmdException("Could not read the IEEE address area from "
                                "the target to check the -i write (%s). %s "
-                               "or pass --force. %s"
-                               % (err, hint.rstrip('.') + ',', FORCE_NOTE))
+                               "or pass --skip-ccfg-check."
+                               % (err, hint.rstrip('.') + ','))
     if image is not None:
         for i in range(len(start)):
             offset = ieee_addr + i - address
@@ -1325,8 +1350,8 @@ def ccfg_write_question(device, image, address, erase_ranges, write_erase,
             raise CmdException("Could not read CCFG from the target to "
                                "check this write without erase (%s). Erase "
                                "the CCFG page first with -e, -W, or an -E "
-                               "range that covers it, or pass --force. "
-                               "%s" % (err, FORCE_NOTE))
+                               "range that covers it, or pass "
+                               "--skip-ccfg-check." % err)
         bl_offset = device.bootloader_address - ccfg_addr
         start = chip_ccfg[bl_offset:bl_offset + 4]
         lost = device.ccfg_bits_lost(image, address, chip_ccfg)
@@ -1560,6 +1585,7 @@ def cli_setup():
     parser.add_argument('--bootloader-active-high', action='store_true', help='Use active high signals to enter bootloader')
     parser.add_argument('--bootloader-invert-lines', action='store_true', help='Inverts the use of RTS and DTR to enter bootloader')
     parser.add_argument('--bootloader-sonoff-usb', action='store_true', help='Toggles RTS and DTR in the correct pattern for Sonoff USB dongle')
+    parser.add_argument('--skip-ccfg-check', action='store_true', help='Skip the CCFG, boot loader lockout and IEEE address checks and their questions, but keep the other checks')
     parser.add_argument('-D', '--disable-bootloader', action='store_true', help='After finishing, disable the bootloader')
     parser.add_argument('--version', action=_VersionAction, nargs=0, help="show program's version number and exit")
     parser.add_argument('file', nargs='?', default=None, help='Firmware file to write or verify, or output file for read')
@@ -1732,19 +1758,13 @@ def main_cli():
                                                  len(firmware.bytes)),
                             device.flash_end)
             write_erase = (erase_start, erase_end - erase_start)
-        if (not args.force and not device.ccfg_known
-                # Any write may reach the real CCFG, which the guess cannot
-                # tell, and -i and -D write to the guessed location
-                and (args.write or args.erase_write or ieee_addr is not None
-                     or args.disable_bootloader)
-                and not query_yes_no("This chip was not recognised, so the "
-                                     "location of its CCFG is a guess and "
-                                     "the boot loader lockout and IEEE "
-                                     "address checks cannot run. Do you want "
-                                     "to continue?", "no")):
-            raise Exception('Aborted by user.')
-        if ((args.write or args.erase_write) and not args.force
-                and device.ccfg_known):
+        check_ccfg = not (args.force or args.skip_ccfg_check)
+        if check_ccfg and not device.ccfg_known:
+            question = guessed_ccfg_question(device, args, ieee_addr)
+            if question and not query_yes_no(question, "no"):
+                raise Exception('Aborted by user.')
+        if (args.write or args.erase_write) and check_ccfg \
+                and device.ccfg_known:
             # Only asks questions, and may read the target, so skip it
             # entirely when forced
             question = ccfg_write_question(device, firmware.bytes,
@@ -1753,7 +1773,7 @@ def main_cli():
                                            args.disable_bootloader)
             if question and not query_yes_no(question, "no"):
                 raise Exception('Aborted by user.')
-        if ieee_addr is not None and not args.force and device.ccfg_known:
+        if ieee_addr is not None and check_ccfg and device.ccfg_known:
             all_erases = erase_ranges + ([write_erase] if write_erase else [])
             writing = args.write or args.erase_write
             question = ieee_write_question(

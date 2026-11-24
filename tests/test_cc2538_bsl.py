@@ -1165,7 +1165,7 @@ def test_failed_chip_read_stops(result):
     with pytest.raises(bsl.CmdException) as exc:
         bsl.ccfg_write_question(device, bytearray(0x10), 0x134, [], None)
     assert "Could not read CCFG" in str(exc.value)
-    assert "past the end of flash" in str(exc.value)
+    assert "--skip-ccfg-check" in str(exc.value)
 
 
 def test_coding_error_in_chip_read_is_not_hidden():
@@ -1522,6 +1522,8 @@ def test_forced_erase_write_skips_ccfg_checks(fake_cli, monkeypatch, tmp_path):
 def test_unknown_ccfg_location_asks_once(fake_cli, monkeypatch, tmp_path, options):
     questions = _declining_prompt(monkeypatch)
     monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
+    monkeypatch.setattr(_FakeDevice, "addr_ieee_address_secondary",
+                        0x1000 - 44 - 8, raising=False)
     fw = tmp_path / "fw.bin"
     fw.write_bytes(b"\x01" * 0x100)
     args = [str(fw) if o == "FW" else o for o in options]
@@ -1555,9 +1557,84 @@ def test_image_disables_bootloader_defaults_to_blank_start():
     assert device.image_disables_bootloader(image, 0) is True
 
 
-def test_cc2538_unknown_flash_size_marks_ccfg_unknown():
+@pytest.mark.parametrize("code, known", [
+    (0, False), (1, True), (4, True), (5, False), (7, False),
+])
+def test_cc2538_flash_size_code_sets_known(code, known):
     class Ci:
         def cmdMemRead(self, addr):
-            return bytearray([0x00, 0x00, 0x00, 0x70])  # reserved size code
+            return bytearray([0x00, 0x00, 0x00, code << 4])
 
-    assert CC2538(Ci()).ccfg_known is False
+    device = CC2538(Ci())
+    assert device.ccfg_known is known
+    assert device.size_known is known
+
+
+@pytest.mark.parametrize("options, reaches", [
+    (["-e", "-w", "FW"], "write"),
+    (["-W", "-a", str(0xF00), "FW"], "write"),
+    (["-i", "00:12:4b:00:00:00:00:02"], "write"),
+], ids=["e-w", "W", "i"])
+def test_unknown_ccfg_location_accepted_goes_ahead(fake_cli, monkeypatch, tmp_path, options, reaches):
+    questions = []
+    monkeypatch.setattr(bsl, "query_yes_no",
+                        lambda q, d: questions.append(q) or True)
+    monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
+    monkeypatch.setattr(_FakeDevice, "addr_ieee_address_secondary",
+                        0x1000 - 44 - 8, raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)
+    fake_cli(*[str(fw) if o == "FW" else o for o in options])
+    assert len(questions) == 1
+    assert reaches in fake_cli.cmd.calls
+
+
+def test_unknown_ccfg_location_disable_bootloader_asks_both(fake_cli, monkeypatch):
+    questions = []
+    monkeypatch.setattr(bsl, "query_yes_no",
+                        lambda q, d: questions.append(q) or True)
+    monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
+    fake_cli("-D")
+    assert "guessed address" in questions[0]
+    assert "Disabling the bootloader" in questions[1]
+
+
+@pytest.mark.parametrize("flag", ["-f", "--skip-ccfg-check"])
+def test_unknown_ccfg_location_flags_skip_question(fake_cli, monkeypatch, tmp_path, flag):
+    def fail(question, default):
+        raise AssertionError("must not prompt")
+    monkeypatch.setattr(bsl, "query_yes_no", fail)
+    monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x100)
+    fake_cli(flag, "-e", "-w", str(fw))
+    assert "write" in fake_cli.cmd.calls
+
+
+def test_skip_ccfg_check_keeps_bounds_check(fake_cli, monkeypatch, tmp_path):
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0x2000)  # larger than the fake flash
+    with pytest.raises(SystemExit):
+        fake_cli("--skip-ccfg-check", "-e", "-w", str(fw))
+    assert "write" not in fake_cli.cmd.calls
+
+
+def test_skip_ccfg_check_skips_ccfg_question_and_read(fake_cli, monkeypatch, tmp_path):
+    def fail(*args):
+        raise AssertionError("must not prompt or read")
+    monkeypatch.setattr(bsl, "query_yes_no", fail)
+    monkeypatch.setattr(_FakeDevice, "read_memory", fail)
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"\x01" * 0xE0)  # partial CCFG restore after -W
+    fake_cli("--skip-ccfg-check", "-W", "-a", str(0xF00), str(fw))
+    assert "write" in fake_cli.cmd.calls
+
+
+def test_cc2538_unknown_size_mass_erase_asks():
+    device = _FakeDevice(_FakeCmd())
+    device.ccfg_known = False
+    device.size_known = False
+    args = type("Args", (), {"write": False, "erase_write": False,
+                             "disable_bootloader": False, "erase": True})()
+    question = bsl.guessed_ccfg_question(device, args, None)
+    assert "-e erases only the guessed 4 KB" in question
