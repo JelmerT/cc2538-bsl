@@ -840,9 +840,10 @@ class Chip:
         """Return True if writing the image would lock out this bootloader.
 
         start is the boot loader word before the write, as for
-        bootloader_word_after_write. None means BLANK_WORD. An image that programs no CCFG byte
-        leaves CCFG blank after an erase, which makes the image invalid so
-        the ROM bootloader runs, and leaves it unchanged otherwise.
+        bootloader_word_after_write; None means BLANK_WORD. An image that
+        programs no CCFG byte leaves CCFG blank after an erase, which makes
+        the image invalid so the ROM bootloader runs, and leaves it
+        unchanged otherwise.
         """
         if not self.image_has_ccfg(image, address):
             return False
@@ -893,7 +894,8 @@ class CC2538(Chip):
             self.size *= 0x20000  # in bytes
         else:
             self.size = 0x10000  # in bytes
-            # Unknown size code, so the end of flash (and CCFG) is a guess
+            # Code 0 and the reserved codes 5-7 are not documented sizes, so
+            # the end of flash (and CCFG) is a guess
             self.ccfg_known = False
         self.bootloader_address = self.flash_start_addr + self.size - ccfg_len
         self.addr_ieee_address_secondary = (self.flash_start_addr + self.size -
@@ -1233,19 +1235,6 @@ def ranges_overlap(ranges, start, length):
     """Return True if any (start, length) range overlaps the given range."""
     return any(r_start < start + length and start < r_start + r_length
                for r_start, r_length in ranges)
-
-
-def writes_guessed_ccfg(device, args, firmware, ieee_addr):
-    """Return True if the run writes into the page holding the CCFG and
-    IEEE address locations that were guessed for this chip. An erase alone
-    leaves CCFG blank, which keeps the ROM boot loader reachable."""
-    if ieee_addr is not None:
-        return True  # -i writes into the guessed location
-    if not (args.write or args.erase_write):
-        return False
-    page = device.page_align_down(device.ccfg_range()[0])
-    return ranges_overlap([(args.address, len(firmware.bytes))],
-                          page, device.flash_end - page)
 
 
 FORCE_NOTE = ("--force also skips the other confirmation questions, the "
@@ -1744,7 +1733,10 @@ def main_cli():
                             device.flash_end)
             write_erase = (erase_start, erase_end - erase_start)
         if (not args.force and not device.ccfg_known
-                and writes_guessed_ccfg(device, args, firmware, ieee_addr)
+                # Any write may reach the real CCFG, which the guess cannot
+                # tell, and -i and -D write to the guessed location
+                and (args.write or args.erase_write or ieee_addr is not None
+                     or args.disable_bootloader)
                 and not query_yes_no("This chip was not recognised, so the "
                                      "location of its CCFG is a guess and "
                                      "the boot loader lockout and IEEE "

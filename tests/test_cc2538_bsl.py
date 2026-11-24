@@ -1512,13 +1512,19 @@ def test_forced_erase_write_skips_ccfg_checks(fake_cli, monkeypatch, tmp_path):
     assert "write" in fake_cli.cmd.calls
 
 
-@pytest.mark.parametrize("options", [["-w"], ["-i", "00:12:4b:00:00:00:00:02"]])
+@pytest.mark.parametrize("options", [
+    ["-w", "FW"],                     # app that misses the guessed CCFG page
+    ["-e", "-w", "FW"],
+    ["-W", "-a", str(0xF00), "FW"],   # reaches it
+    ["-i", "00:12:4b:00:00:00:00:02"],
+    ["-D"],
+], ids=["w", "e-w", "W", "i", "D"])
 def test_unknown_ccfg_location_asks_once(fake_cli, monkeypatch, tmp_path, options):
     questions = _declining_prompt(monkeypatch)
     monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
     fw = tmp_path / "fw.bin"
     fw.write_bytes(b"\x01" * 0x100)
-    args = options + (["-a", str(0xF00), str(fw)] if options == ["-w"] else [])
+    args = [str(fw) if o == "FW" else o for o in options]
     with pytest.raises(SystemExit) as exc:
         fake_cli(*args)
     assert "Aborted" in str(exc.value.code)
@@ -1530,17 +1536,6 @@ def test_unknown_ccfg_location_asks_once(fake_cli, monkeypatch, tmp_path, option
 def test_unknown_wafer_marks_ccfg_unknown():
     fake = _FakeCommandInterface([0x00, 0x00, 0x00, 0x00])
     assert CC26xx(fake).ccfg_known is False
-
-
-def test_unknown_ccfg_location_app_write_does_not_ask(fake_cli, monkeypatch, tmp_path):
-    def fail(question, default):
-        raise AssertionError("must not prompt")
-    monkeypatch.setattr(bsl, "query_yes_no", fail)
-    monkeypatch.setattr(_FakeDevice, "ccfg_known", False, raising=False)
-    fw = tmp_path / "fw.bin"
-    fw.write_bytes(b"\x01" * 0x100)
-    fake_cli("-e", "-w", str(fw))
-    assert "write" in fake_cli.cmd.calls
 
 
 def test_cc2538_blank_image_word_keeps_chip_backdoor():
